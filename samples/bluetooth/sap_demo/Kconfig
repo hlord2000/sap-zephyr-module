@@ -87,6 +87,17 @@ config SAP_DK_IO
 	  central, peripherals 1..4 map to LEDs 1..4. Additional peripherals
 	  remain authenticated but do not receive an LED assignment.
 
+config SAP_DEMO_PERIPHERAL_ID
+	int "Hardware peripheral device identifier"
+	depends on SAP_ROLE_PERIPHERAL && !BOARD_NRF54L15BSIM
+	range 1 4
+	default 1
+	help
+	  Select which demo peripheral credential this hardware build should use.
+	  The sample contains four provisioned peripheral identities with device
+	  IDs 1..4. Build each real peripheral with a different value so the
+	  central can authenticate and track them as distinct SAP peers.
+
 config SAP_DEMO_GATED_DFU_SERVICE
 	bool "Expose gated MCUmgr DFU SMP service after SAP"
 	default y if !BOARD_NRF54L15BSIM

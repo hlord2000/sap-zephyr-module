@@ -226,6 +226,8 @@ static unsigned int simulated_device_number(void)
 {
 #if defined(CONFIG_BOARD_NRF54L15BSIM)
 	return bsim_args_get_global_device_nbr();
+#elif defined(CONFIG_SAP_ROLE_PERIPHERAL)
+	return CONFIG_SAP_DEMO_PERIPHERAL_ID;
 #else
 	return 0U;
 #endif
