@@ -6,9 +6,11 @@ tests:
     platform_allow:
       - nrf54l15bsim/nrf54l15/cpuapp
       - nrf54l15dk/nrf54l15/cpuapp
+      - nrf54l15dk/nrf54l15/cpuapp/ns
     integration_platforms:
       - nrf54l15bsim/nrf54l15/cpuapp
       - nrf54l15dk/nrf54l15/cpuapp
+      - nrf54l15dk/nrf54l15/cpuapp/ns
     tags:
       - bluetooth
       - crypto
@@ -18,9 +20,11 @@ tests:
     platform_allow:
       - nrf54l15bsim/nrf54l15/cpuapp
       - nrf54l15dk/nrf54l15/cpuapp
+      - nrf54l15dk/nrf54l15/cpuapp/ns
     integration_platforms:
       - nrf54l15bsim/nrf54l15/cpuapp
       - nrf54l15dk/nrf54l15/cpuapp
+      - nrf54l15dk/nrf54l15/cpuapp/ns
     tags:
       - bluetooth
       - crypto

@@ -8,11 +8,12 @@ Secure Application Pairing (SAP)
    :depth: 2
 
 This sample demonstrates the standalone SAP Zephyr module on
-``nrf54l15bsim/nrf54l15/cpuapp`` and ``nrf54l15dk/nrf54l15/cpuapp``. SAP is
-implemented as an application-layer service on top of BLE. Devices first
-establish a BLE link and, when enabled, upgrade it with BLE security before
-they perform a mutual certificate-based challenge/response handshake.
-Application traffic is accepted only after SAP authentication succeeds.
+``nrf54l15bsim/nrf54l15/cpuapp``, ``nrf54l15dk/nrf54l15/cpuapp``, and
+``nrf54l15dk/nrf54l15/cpuapp/ns``. SAP is implemented as an application-layer
+service on top of BLE. Devices first establish a BLE link and, when enabled,
+upgrade it with BLE security before they perform a mutual certificate-based
+challenge/response handshake. Application traffic is accepted only after SAP
+authentication succeeds.
 
 For a full protocol walkthrough, see ``doc/flow.rst``.
 
@@ -44,6 +45,12 @@ boards confirmed the full real-target path:
 * A peripheral button event drove the assigned LED on the central.
 * Resetting one side forced BLE reconnect, reran SAP, and re-verified both
   gated services on the next link.
+
+Local build validation on March 24, 2026 also confirmed that the sample builds
+cleanly for the TF-M-backed non-secure target
+``nrf54l15dk/nrf54l15/cpuapp/ns`` in both central and peripheral roles. On
+that target, TF-M protects the temporary KMU push area used by CRACEN-backed
+PSA operations.
 
 The real target uses the CRACEN PSA backend. Its HKDF implementation limits
 the ``info`` field to 128 bytes, so the sample hashes the ECDH transcript
@@ -130,6 +137,28 @@ Build the hardware peripheral:
      $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
      -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
      -DEXTRA_CONF_FILE="peripheral.conf;demo_logging.conf"
+
+Build the TF-M-backed non-secure hardware central:
+
+.. code-block:: console
+
+   west build -p -d build-central-module-tfm -b nrf54l15dk/nrf54l15/cpuapp/ns \
+     $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
+     -DEXTRA_CONF_FILE="central.conf;demo_logging.conf"
+
+Build the TF-M-backed non-secure hardware peripheral:
+
+.. code-block:: console
+
+   west build -p -d build-peripheral-module-tfm -b nrf54l15dk/nrf54l15/cpuapp/ns \
+     $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
+     -DEXTRA_CONF_FILE="peripheral.conf;demo_logging.conf"
+
+For nRF54L15 TF-M builds, use the ``/ns`` board qualifier instead of forcing
+``CONFIG_BUILD_WITH_TFM=y`` onto ``nrf54l15dk/nrf54l15/cpuapp``. The non-secure
+board variant enables the correct TF-M/sysbuild path automatically.
 
 Build with the customer-demo flow trace enabled:
 

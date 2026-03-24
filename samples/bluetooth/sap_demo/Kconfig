@@ -78,7 +78,8 @@ endif
 
 config SAP_DK_IO
 	bool "Enable DK button and LED demo IO"
-	depends on BOARD_NRF54L15DK_NRF54L15_CPUAPP
+	depends on BOARD_NRF54L15DK_NRF54L15_CPUAPP || \
+		BOARD_NRF54L15DK_NRF54L15_CPUAPP_NS
 	default y
 	select DK_LIBRARY
 	help
