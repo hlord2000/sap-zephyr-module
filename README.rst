@@ -112,3 +112,14 @@ The demo sample still shows the full end-to-end flow, including:
 
 For the full walkthrough and sample-specific behavior, see
 ``samples/bluetooth/sap_demo/README.rst``.
+
+KMU planning helper
+*******************
+
+To print the recommended nRF54L15 KMU migration plan for the SAP identity key,
+including the PSA attributes and ``nrfutil`` provisioning command template,
+run:
+
+.. code-block:: console
+
+   /home/h/Documents/Nordic/sap-zephyr-module/scripts/explain_sap_kmu.sh
