@@ -1,0 +1,118 @@
+#
+# Copyright (c) 2026
+#
+# SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+#
+
+mainmenu "Secure Application Pairing sample"
+
+source "Kconfig.zephyr"
+
+menu "SAP sample configuration"
+
+choice SAP_ROLE
+	prompt "SAP role"
+	default SAP_ROLE_CENTRAL
+
+config SAP_ROLE_CENTRAL
+	bool "Central"
+	select BT_CENTRAL
+	select BT_OBSERVER
+	select BT_GATT_CLIENT
+	select BT_GATT_DM
+
+config SAP_ROLE_PERIPHERAL
+	bool "Peripheral"
+	select BT_PERIPHERAL
+
+endchoice
+
+config SAP_MAX_PEERS
+	int "Maximum SAP peers"
+	range 1 8
+	default 4
+
+config SAP_EXPECTED_GROUP_ID
+	hex "Expected SAP group identifier"
+	default 0x2A
+
+config SAP_ALLOWED_CENTRAL_ID
+	int "Allowed central device identifier"
+	range 0 255
+	default 0
+
+config SAP_REQUIRE_BLE_ENCRYPTION
+	bool "Require BLE link encryption before SAP"
+	default n if BOARD_NRF54L15BSIM
+	default y
+	help
+	  Keep BLE SMP/link encryption as a prerequisite for SAP when the target
+	  supports it reliably. On the nrf54l15bsim sample target this defaults
+	  to disabled because local BabbleSim validation could not complete the
+	  BLE security procedure reliably on that simulator target. The sample
+	  still exercises SAP mutual authentication and SAP-level AES-CCM
+	  transport protection there.
+
+config SAP_DEMO_LOGGING
+	bool "Enable verbose SAP flow logging"
+	default n
+	help
+	  Emit a step-by-step demonstration trace for BLE security, SAP
+	  mutual authentication, session key establishment, and protected
+	  service exposure. This is intended for customer demos and protocol
+	  walkthroughs. It increases log volume but does not print secrets.
+
+config SAP_PACKET_LOGGING
+	bool "Enable raw SAP packet logging"
+	default n
+	help
+	  Emit hexdumps of the exact SAP auth packets and SAP secure frames
+	  sent over GATT. This is intended for protocol debugging, not for
+	  customer-facing demos. The dumps include handshake nonces,
+	  certificates, signatures, and encrypted SAP frame bytes.
+
+config SAP_SHELL
+	bool "Enable SAP shell commands"
+	default y if !BOARD_NRF54L15BSIM
+	default n if BOARD_NRF54L15BSIM
+	select SHELL
+	select SHELL_BACKEND_SERIAL
+	select SHELL_VT100_COLORS
+	help
+	  Enable a UART shell with SAP demo commands. The central build can list
+	  peers and send secure text to one peer or all peers. The peripheral
+	  build can send secure text to the connected central.
+
+if SAP_SHELL
+
+config SHELL_STACK_SIZE
+	default 3072
+
+config SHELL_CMD_BUFF_SIZE
+	default 256
+
+config SHELL_ARGC_MAX
+	default 16
+
+config SHELL_BACKEND_SERIAL_TX_RING_BUFFER_SIZE
+	default 1024
+
+endif
+
+config SAP_DK_IO
+	bool "Enable DK button and LED demo IO"
+	depends on BOARD_NRF54L15DK_NRF54L15_CPUAPP
+	default y
+	select DK_LIBRARY
+	help
+	  Enable the Nordic DK buttons and LEDs for the SAP demo. On the
+	  peripheral, Button 1 sends a secure button-state event. On the
+	  central, peripherals 1..4 map to LEDs 1..4. Additional peripherals
+	  remain authenticated but do not receive an LED assignment.
+
+config SAP_LOG_LEVEL
+	int
+	default 4 if SAP_DEMO_LOGGING || SAP_PACKET_LOGGING
+	default 3
+
+endmenu
