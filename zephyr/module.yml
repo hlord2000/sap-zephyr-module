@@ -1,0 +1,6 @@
+name: sap
+build:
+  cmake: .
+  kconfig: Kconfig
+samples:
+  - samples

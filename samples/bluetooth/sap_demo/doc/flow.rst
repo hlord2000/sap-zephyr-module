@@ -161,6 +161,11 @@ The sample demonstrates two post-auth paths:
 * secure text payloads sent from the UART shell
 * secure button-state events from the peripheral
 
+Those application message IDs and the protected-service UUIDs are defined in
+the demo application, not in the reusable SAP module. Consumer applications are
+expected to define their own application payload types and their own protected
+services on top of the SAP session callbacks.
+
 On ``nrf54l15dk``:
 
 * the peripheral's DK Button 1 sends ``BUTTON_STATE`` events

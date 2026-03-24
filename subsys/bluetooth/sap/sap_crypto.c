@@ -7,7 +7,7 @@
 #include <errno.h>
 #include <string.h>
 
-#include "sap_protocol.h"
+#include <sap/sap_protocol.h>
 #include "sap_crypto.h"
 
 int sap_crypto_hash_sha256(const uint8_t *message, size_t message_len,

@@ -27,8 +27,9 @@
 #include <dk_buttons_and_leds.h>
 #endif
 
-#include "sap_service.h"
-#include "sap_trace.h"
+#include "demo_protocol.h"
+#include <sap/sap_service.h>
+#include <sap/sap_trace.h>
 
 LOG_MODULE_REGISTER(sap_central, CONFIG_SAP_LOG_LEVEL);
 
@@ -421,8 +422,8 @@ static void protected_service_discovered(struct bt_gatt_dm *dm, void *context)
 	const struct bt_gatt_dm_attr *desc;
 	int err;
 
-	chrc = bt_gatt_dm_char_by_uuid(dm, BT_UUID_SAP_PROTECTED_STATUS);
-	desc = bt_gatt_dm_desc_by_uuid(dm, chrc, BT_UUID_SAP_PROTECTED_STATUS);
+	chrc = bt_gatt_dm_char_by_uuid(dm, BT_UUID_SAP_DEMO_PROTECTED_STATUS);
+	desc = bt_gatt_dm_desc_by_uuid(dm, chrc, BT_UUID_SAP_DEMO_PROTECTED_STATUS);
 	peer->handles.protected_status = desc->handle;
 
 	bt_gatt_dm_data_release(dm);
@@ -475,7 +476,7 @@ static void discover_protected_service(struct sap_central_peer *peer)
 	int err;
 
 	peer->protected_discovery_retry = false;
-	err = bt_gatt_dm_start(peer->conn, BT_UUID_SAP_PROTECTED_SERVICE,
+	err = bt_gatt_dm_start(peer->conn, BT_UUID_SAP_DEMO_PROTECTED_SERVICE,
 			       &protected_dm_cb, peer);
 	if ((err == -EALREADY) || (err == -EBUSY)) {
 		peer->protected_discovery_retry = true;
@@ -501,7 +502,7 @@ static void on_authenticated(struct sap_session *session)
 
 	len = snprintk(payload, sizeof(payload), "hello-%u",
 		       session->peer_cert.body.device_id);
-	err = sap_send_secure(session, SAP_MSG_SECURE_DATA,
+	err = sap_send_secure(session, SAP_DEMO_MSG_TEXT,
 			      (const uint8_t *)payload, (size_t)len);
 	if (err != 0) {
 		LOG_ERR("Failed to send secure payload (%d)", err);
@@ -526,13 +527,13 @@ static void on_auth_failed(struct sap_session *session, int reason)
 static void on_secure_payload(struct sap_session *session, uint8_t msg_type,
 			      const uint8_t *data, size_t len)
 {
-	if (msg_type == SAP_MSG_SECURE_ACK) {
+	if (msg_type == SAP_DEMO_MSG_TEXT_ACK) {
 		LOG_INF("Secure ACK from peripheral %u: %.*s",
 			session->peer_cert.body.device_id, len, (const char *)data);
 		return;
 	}
 
-	if (msg_type == SAP_MSG_BUTTON_STATE) {
+	if (msg_type == SAP_DEMO_MSG_BUTTON_STATE) {
 		bool pressed;
 
 		if (len != 1U) {
@@ -972,7 +973,7 @@ static int send_text_to_peer(struct sap_central_peer *peer, const char *text)
 		return -EACCES;
 	}
 
-	return sap_send_secure(peer->session, SAP_MSG_SECURE_DATA,
+	return sap_send_secure(peer->session, SAP_DEMO_MSG_TEXT,
 			       (const uint8_t *)text, strlen(text));
 }
 

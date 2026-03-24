@@ -12,10 +12,10 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/settings/settings.h>
 
-#include "sap_service.h"
-#include "sap_credentials.h"
-#include "sap_crypto.h"
-#include "sap_trace.h"
+#include <sap/sap_service.h>
+#include <sap/sap_trace.h>
+
+#include "demo_credentials.h"
 
 LOG_MODULE_REGISTER(sap_main, CONFIG_SAP_LOG_LEVEL);
 
@@ -77,20 +77,14 @@ int main(void)
 	size_t ca_len;
 	int err;
 
-	local_credential = sap_credentials_select(role);
+	local_credential = demo_credentials_select(role);
 	memset(&policy, 0, sizeof(policy));
 	policy.local_credential = local_credential;
-	policy.ca_public_key = sap_credentials_ca_public_key(&ca_len);
+	policy.ca_public_key = demo_credentials_ca_public_key(&ca_len);
 	policy.ca_public_key_len = ca_len;
 	policy.expected_group_id = CONFIG_SAP_EXPECTED_GROUP_ID;
 	policy.allowed_central_id = CONFIG_SAP_ALLOWED_CENTRAL_ID;
 	policy.require_ble_encryption = IS_ENABLED(CONFIG_SAP_REQUIRE_BLE_ENCRYPTION);
-
-	err = sap_crypto_init();
-	if (err != 0) {
-		LOG_ERR("PSA crypto init failed (%d)", err);
-		return 0;
-	}
 
 	err = bt_enable(NULL);
 	if (err != 0) {

@@ -6,7 +6,7 @@
 
 #include <zephyr/kernel.h>
 
-#include "sap_credentials.h"
+#include "demo_credentials.h"
 
 #if defined(CONFIG_BOARD_NRF54L15BSIM)
 extern unsigned int bsim_args_get_global_device_nbr(void);
@@ -231,7 +231,7 @@ static unsigned int simulated_device_number(void)
 #endif
 }
 
-const struct sap_device_credential *sap_credentials_select(enum sap_role role)
+const struct sap_device_credential *demo_credentials_select(enum sap_role role)
 {
 	size_t i;
 	unsigned int dev_num = simulated_device_number();
@@ -249,7 +249,7 @@ const struct sap_device_credential *sap_credentials_select(enum sap_role role)
 	return &peripheral_credentials[0];
 }
 
-const uint8_t *sap_credentials_ca_public_key(size_t *len)
+const uint8_t *demo_credentials_ca_public_key(size_t *len)
 {
 	if (len != NULL) {
 		*len = sizeof(sap_ca_public_key);

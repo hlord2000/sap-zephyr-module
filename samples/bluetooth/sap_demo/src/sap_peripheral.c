@@ -24,8 +24,9 @@
 #include <dk_buttons_and_leds.h>
 #endif
 
-#include "sap_service.h"
-#include "sap_trace.h"
+#include "demo_protocol.h"
+#include <sap/sap_service.h>
+#include <sap/sap_trace.h>
 
 LOG_MODULE_REGISTER(sap_peripheral, CONFIG_SAP_LOG_LEVEL);
 
@@ -91,8 +92,8 @@ BT_GATT_SERVICE_DEFINE(sap_svc,
 			       BT_GATT_PERM_WRITE, NULL, sap_secure_rx_write, NULL));
 
 static struct bt_gatt_attr protected_attrs[] = {
-	BT_GATT_PRIMARY_SERVICE(BT_UUID_SAP_PROTECTED_SERVICE),
-	BT_GATT_CHARACTERISTIC(BT_UUID_SAP_PROTECTED_STATUS,
+	BT_GATT_PRIMARY_SERVICE(BT_UUID_SAP_DEMO_PROTECTED_SERVICE),
+	BT_GATT_CHARACTERISTIC(BT_UUID_SAP_DEMO_PROTECTED_STATUS,
 			       BT_GATT_CHRC_READ,
 			       BT_GATT_PERM_READ,
 			       protected_status_read, NULL, NULL),
@@ -225,7 +226,7 @@ static void on_secure_payload(struct sap_session *session, uint8_t msg_type,
 	char response[48];
 	int resp_len;
 
-	if (msg_type != SAP_MSG_SECURE_DATA) {
+	if (msg_type != SAP_DEMO_MSG_TEXT) {
 		return;
 	}
 
@@ -233,7 +234,7 @@ static void on_secure_payload(struct sap_session *session, uint8_t msg_type,
 	SAP_TRACE("FLOW post-auth: peripheral accepted encrypted application payload from central");
 	resp_len = snprintk(response, sizeof(response), "ack-%u",
 			    session->ctx->policy.local_credential->cert.body.device_id);
-	(void)sap_send_secure(session, SAP_MSG_SECURE_ACK,
+	(void)sap_send_secure(session, SAP_DEMO_MSG_TEXT_ACK,
 			      (const uint8_t *)response, (size_t)resp_len);
 }
 
@@ -252,7 +253,8 @@ static void button_report_fn(struct k_work *work)
 	}
 
 	payload = button_pressed ? 1U : 0U;
-	err = sap_send_secure(session, SAP_MSG_BUTTON_STATE, &payload, sizeof(payload));
+	err = sap_send_secure(session, SAP_DEMO_MSG_BUTTON_STATE,
+			      &payload, sizeof(payload));
 	if (err != 0) {
 		LOG_ERR("Failed to send secure button state (%d)", err);
 		return;
@@ -504,7 +506,7 @@ static int send_text_to_central(const char *text)
 		return -ENOTCONN;
 	}
 
-	return sap_send_secure(session, SAP_MSG_SECURE_DATA,
+	return sap_send_secure(session, SAP_DEMO_MSG_TEXT,
 			       (const uint8_t *)text, strlen(text));
 }
 

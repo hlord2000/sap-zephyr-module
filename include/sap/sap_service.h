@@ -11,10 +11,15 @@
 #include <psa/crypto.h>
 #include <zephyr/bluetooth/conn.h>
 
-#include "sap_protocol.h"
-#include "sap_credentials.h"
+#include <sap/sap_protocol.h>
 
 struct sap_context;
+
+struct sap_device_credential {
+	uint8_t simulated_device_number;
+	uint8_t private_key[SAP_IDENTITY_PRIVATE_KEY_LEN];
+	struct sap_certificate cert;
+};
 
 enum sap_session_state {
 	SAP_STATE_IDLE = 0,

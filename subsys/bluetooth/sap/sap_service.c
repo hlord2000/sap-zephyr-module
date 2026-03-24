@@ -11,12 +11,13 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/logging/log.h>
 
-#include "sap_service.h"
+#include <sap/sap_service.h>
 #include "sap_crypto.h"
-#include "sap_trace.h"
+#include <sap/sap_trace.h>
 
 LOG_MODULE_REGISTER(sap_service, CONFIG_SAP_LOG_LEVEL);
 
+#if defined(CONFIG_BT_L2CAP_TX_MTU)
 BUILD_ASSERT(sizeof(struct sap_msg_hello) <= (CONFIG_BT_L2CAP_TX_MTU - 3),
 	     "SAP hello must fit ATT MTU");
 BUILD_ASSERT(sizeof(struct sap_msg_peripheral_challenge) <= (CONFIG_BT_L2CAP_TX_MTU - 3),
@@ -25,6 +26,7 @@ BUILD_ASSERT(sizeof(struct sap_msg_central_auth) <= (CONFIG_BT_L2CAP_TX_MTU - 3)
 	     "Central auth must fit ATT MTU");
 BUILD_ASSERT(sizeof(struct sap_msg_peripheral_auth) <= (CONFIG_BT_L2CAP_TX_MTU - 3),
 	     "Peripheral auth must fit ATT MTU");
+#endif
 
 static void sap_trace_auth_packet(const struct sap_session *session,
 				  const char *direction,
@@ -34,9 +36,9 @@ static void sap_trace_auth_packet(const struct sap_session *session,
 	uint8_t version = (len >= 1U) ? data[0] : 0xffU;
 	uint8_t type = (len >= 2U) ? data[1] : 0xffU;
 
-	SAP_PACKET_TRACE("PACKET %s %s auth %s len=%zu version=%u",
+	SAP_PACKET_TRACE("PACKET %s %s auth %s(0x%02x) len=%zu version=%u",
 			 sap_role_str(session->role), direction,
-			 sap_msg_type_str(type), len, version);
+			 sap_msg_type_str(type), type, len, version);
 	SAP_PACKET_DUMP(data, len, "auth bytes");
 #else
 	ARG_UNUSED(session);
@@ -63,9 +65,9 @@ static void sap_trace_secure_packet(const struct sap_session *session,
 		counter = sys_le32_to_cpu(header->counter_le);
 	}
 
-	SAP_PACKET_TRACE("PACKET %s %s secure %s len=%zu version=%u counter=%u",
+	SAP_PACKET_TRACE("PACKET %s %s secure %s(0x%02x) len=%zu version=%u counter=%u",
 			 sap_role_str(session->role), direction,
-			 sap_msg_type_str(type), len, version, counter);
+			 sap_msg_type_str(type), type, len, version, counter);
 	SAP_PACKET_DUMP(data, len, "secure bytes");
 #else
 	ARG_UNUSED(session);
@@ -458,14 +460,22 @@ int sap_init(struct sap_context *ctx, enum sap_role role,
 	     const struct sap_policy *policy,
 	     const struct sap_callbacks *callbacks)
 {
+	int err;
+
 	memset(ctx, 0, sizeof(*ctx));
 	ctx->role = role;
 	ctx->policy = *policy;
 	ctx->callbacks = *callbacks;
 
-	return sap_crypto_import_identity_private(policy->local_credential->private_key,
-						  sizeof(policy->local_credential->private_key),
-						  &ctx->local_sign_key_id);
+	err = sap_crypto_init();
+	if (err != 0) {
+		return err;
+	}
+
+	return sap_crypto_import_identity_private(
+		policy->local_credential->private_key,
+		sizeof(policy->local_credential->private_key),
+		&ctx->local_sign_key_id);
 }
 
 void sap_uninit(struct sap_context *ctx)
@@ -1023,9 +1033,7 @@ int sap_handle_secure_rx(struct sap_session *session, const uint8_t *data, size_
 		err = 0;
 		break;
 
-	case SAP_MSG_SECURE_DATA:
-	case SAP_MSG_SECURE_ACK:
-	case SAP_MSG_BUTTON_STATE:
+	default:
 		if (!sap_is_authenticated(session)) {
 			err = -EACCES;
 			break;
@@ -1038,10 +1046,6 @@ int sap_handle_secure_rx(struct sap_session *session, const uint8_t *data, size_
 								   plaintext_len);
 		}
 		err = 0;
-		break;
-
-	default:
-		err = -EPROTO;
 		break;
 	}
 

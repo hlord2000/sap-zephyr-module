@@ -9,7 +9,7 @@
 
 #include <zephyr/logging/log.h>
 
-#include "sap_protocol.h"
+#include <sap/sap_protocol.h>
 
 #define SAP_TRACE_COLOR_PREFIX "\x1b[1;96m[SAP FLOW]\x1b[0m "
 #define SAP_PACKET_TRACE_COLOR_PREFIX "\x1b[1;93m[SAP PACKET]\x1b[0m "
@@ -41,14 +41,8 @@ static inline const char *sap_msg_type_str(uint8_t type)
 		return "CONFIRM";
 	case SAP_MSG_CONFIRM_ACK:
 		return "CONFIRM_ACK";
-	case SAP_MSG_SECURE_DATA:
-		return "SECURE_DATA";
-	case SAP_MSG_SECURE_ACK:
-		return "SECURE_ACK";
-	case SAP_MSG_BUTTON_STATE:
-		return "BUTTON_STATE";
 	default:
-		return "UNKNOWN";
+		return (type >= SAP_APP_MSG_TYPE_MIN) ? "APP" : "UNKNOWN";
 	}
 }
 

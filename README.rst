@@ -1,247 +1,114 @@
-.. _secure_application_pairing_sample:
+SAP Zephyr Module
+#################
 
-Secure Application Pairing (SAP)
-################################
+This repository packages Secure Application Pairing (SAP) as a standalone
+Zephyr module. The reusable library lives under ``include/sap`` and
+``subsys/bluetooth/sap``. The demo application that exercises the module lives
+under ``samples/bluetooth/sap_demo``.
 
-.. contents::
-   :local:
-   :depth: 2
+What the module provides
+***********************
 
-This sample demonstrates Secure Application Pairing (SAP) on
-``nrf54l15bsim/nrf54l15/cpuapp`` and ``nrf54l15dk/nrf54l15/cpuapp``. SAP is
-implemented as an application-layer service on top of BLE. Devices first
-establish a BLE link and, when enabled, upgrade it with BLE security before
-they perform a mutual certificate-based challenge/response handshake.
-Application traffic is accepted only after SAP authentication succeeds.
+The module owns the SAP control-plane protocol:
 
-For a full protocol walkthrough, see ``doc/flow.rst``.
+* mutual certificate-based authentication over BLE
+* per-connection ECDH + HKDF session derivation
+* AES-CCM protection for post-auth SAP frames
+* session state tracking and authenticated callbacks
 
-The sample uses:
+The consuming application owns the application plane:
 
-* A shared SAP root CA public key compiled into the image.
-* Per-device ``secp256r1`` ECDSA identity keys and compact SAP certificates.
-* Ephemeral ECDH over ``secp256r1`` to derive per-connection session keys.
-* HKDF-SHA256 to derive an AES-CCM key and per-direction nonce bases.
-* A protected GATT service that is registered only after SAP succeeds.
+* device credentials and policy
+* BLE transport wiring to the SAP auth and secure characteristics
+* application message IDs carried inside SAP secure frames
+* any protected GATT services or other functionality gated behind SAP auth
 
-Hardware notes
-**************
-
-Local validation on March 24, 2026 using two ``nrf54l15dk/nrf54l15/cpuapp``
-boards confirmed the full real-target path:
-
-* BLE pairing reached ``BT_SECURITY_L2`` on both boards.
-* Mutual SAP authentication completed in both directions.
-* The peripheral registered the protected GATT service only after SAP success.
-* The central discovered and read the protected service only after SAP auth.
-* Secure shell traffic worked in both directions on the UART shell.
-* A peripheral button event drove the assigned LED on the central.
-
-The real target uses the CRACEN PSA backend. Its HKDF implementation limits
-the ``info`` field to 128 bytes, so the sample hashes the ECDH transcript
-before feeding it into HKDF.
-
-Simulator notes
-***************
-
-This sample is shaped around BabbleSim limitations for native/POSIX targets:
-
-* No TF-M, SPU, or KMU-backed isolation is assumed.
-* Public-key operations are performed through the PSA software backend on the
-  simulated board.
-* ``PSA_ALG_PURE_EDDSA`` / Ed25519 is not used here because the current
-  simulator-backed Mbed TLS configuration does not implement it.
-* The sample is fully event-driven and avoids busy waits.
-* ``CONFIG_BT_PRIVACY=y`` is enabled so the sample follows the same privacy
-  assumptions as Zephyr's bsim security tests.
-* ``CONFIG_SAP_REQUIRE_BLE_ENCRYPTION`` defaults to ``n`` on
-  ``nrf54l15bsim``. On March 24, 2026, local runtime validation on
-  ``nrf54l15bsim/nrf54l15/cpuapp`` showed the same BLE security failure in
-  both this sample and Zephyr's
-  ``tests/bsim/bluetooth/host/adv/periodic:per_adv_conn_privacy_sync``:
-  the peripheral disconnected with reason ``0x3d`` and the central reported
-  a security failure before the link reached ``BT_SECURITY_L2``. The sample
-  therefore exercises SAP mutual authentication and SAP-level AES-CCM
-  transport protection directly on this simulator target. Real targets should
-  keep BLE link encryption enabled.
-* Dynamic GATT registration is used only on the single-connection peripheral
-  sample path because the GATT database is global, not per connection.
-  Per-connection authorization is still enforced in callbacks.
-
-Building
-********
-
-Use the environment helper before building:
-
-.. code-block:: console
-
-   source activate-nrf.sh
-
-Build the BabbleSim central:
-
-.. code-block:: console
-
-   west build -p -b nrf54l15bsim/nrf54l15/cpuapp nrf/samples/bluetooth/sap -- -DEXTRA_CONF_FILE=central.conf
-
-Build the BabbleSim peripheral:
-
-.. code-block:: console
-
-   west build -p -b nrf54l15bsim/nrf54l15/cpuapp nrf/samples/bluetooth/sap -- -DEXTRA_CONF_FILE=peripheral.conf
-
-Build the hardware central:
-
-.. code-block:: console
-
-   west build -p -b nrf54l15dk/nrf54l15/cpuapp nrf/samples/bluetooth/sap
-
-Build the hardware peripheral:
-
-.. code-block:: console
-
-   west build -p -b nrf54l15dk/nrf54l15/cpuapp nrf/samples/bluetooth/sap -- -DEXTRA_CONF_FILE=peripheral.conf
-
-Build with the customer-demo flow trace enabled:
-
-.. code-block:: console
-
-   west build -p -b nrf54l15dk/nrf54l15/cpuapp nrf/samples/bluetooth/sap -- -DEXTRA_CONF_FILE="peripheral.conf;demo_logging.conf"
-
-   west build -p -b nrf54l15dk/nrf54l15/cpuapp nrf/samples/bluetooth/sap -- -DEXTRA_CONF_FILE="central.conf;demo_logging.conf"
-
-Build with raw SAP packet hexdumps enabled:
-
-.. code-block:: console
-
-   west build -p -b nrf54l15dk/nrf54l15/cpuapp nrf/samples/bluetooth/sap -- -DEXTRA_CONF_FILE="peripheral.conf;demo_logging.conf;packet_logging.conf"
-
-   west build -p -b nrf54l15dk/nrf54l15/cpuapp nrf/samples/bluetooth/sap -- -DEXTRA_CONF_FILE="central.conf;demo_logging.conf;packet_logging.conf"
-
-Running
-*******
-
-The sample expects multiple simulated instances. For a basic run:
-
-* one central instance with device number ``0``
-* one or more peripheral instances with device numbers ``1..4``
-
-The sample credential table maps those BabbleSim device numbers to static SAP
-certificates and private keys.
-
-One-central/one-peripheral smoke test:
-
-.. code-block:: console
-
-   tools/bsim/bin/bs_2G4_phy_v1 -s=sap_smoke -D=2 -sim_length=20e6
-   build-sap-central/sap/zephyr/zephyr.exe -s=sap_smoke -d=0
-   build-sap-peripheral/sap/zephyr/zephyr.exe -s=sap_smoke -d=1
-
-One-central/three-peripheral topology:
-
-.. code-block:: console
-
-   tools/bsim/bin/bs_2G4_phy_v1 -s=sap_multi -D=4 -sim_length=30e6
-   build-sap-central/sap/zephyr/zephyr.exe -s=sap_multi -d=0
-   build-sap-peripheral/sap/zephyr/zephyr.exe -s=sap_multi -d=1
-   build-sap-peripheral/sap/zephyr/zephyr.exe -s=sap_multi -d=2
-   build-sap-peripheral/sap/zephyr/zephyr.exe -s=sap_multi -d=3
-
-For interactive debugging, ``west debug -d build-sap-central`` and
-``west debug -d build-sap-peripheral`` use the ``native`` runner and attach
-``gdb`` to ``zephyr.exe``.
-
-For hardware flashing:
-
-.. code-block:: console
-
-   west flash -d build-sap-central-hw --dev-id <central-probe-serial>
-   west flash -d build-sap-peripheral-hw --dev-id <peripheral-probe-serial>
-
-UART shell commands
-*******************
-
-On ``nrf54l15dk`` the sample enables a serial shell by default.
-
-Central role:
-
-.. code-block:: text
-
-   sap peers
-   sap send 1 hello from central shell
-   sap send all fleet-wide test message
-
-Peripheral role:
-
-.. code-block:: text
-
-   sap status
-   sap send hello from peripheral shell
-   sap button pressed
-   sap button released
-
-``sap button`` uses the same secure application message as the physical DK
-Button 1 path, which is useful for scripted demos.
-
-Behavior
-********
-
-1. The central connects and upgrades BLE security when
-   ``CONFIG_SAP_REQUIRE_BLE_ENCRYPTION=y``.
-2. The peripheral answers a SAP hello with its certificate, a challenge nonce,
-   and a signature proving possession of its ECDSA identity key.
-3. The central validates the certificate against the SAP CA, signs the
-   transcript, and sends its own certificate plus an ephemeral ECDH public key.
-4. The peripheral validates the central, replies with its own ephemeral key,
-   and both sides derive the same SAP session material.
-5. Both directions then use AES-CCM protected SAP frames.
-6. After authentication, the peripheral dynamically registers a protected
-   service. The central discovers it and reads a status characteristic.
-7. The application demo path then stays behind SAP:
-
-   * arbitrary shell text is sent inside encrypted SAP frames
-   * the peripheral's DK Button 1 sends a secure button-state event
-   * the central maps peripheral IDs ``1..4`` onto LEDs ``1..4``
-   * peripherals above ID ``4`` stay authenticated but have no LED assignment
-
-Verbose demo logs
+Repository layout
 *****************
 
-Set ``CONFIG_SAP_DEMO_LOGGING=y`` to emit a step-by-step flow trace. A helper
-overlay is provided as ``demo_logging.conf``.
+* ``include/sap``: public headers for consumers
+* ``subsys/bluetooth/sap``: reusable SAP library implementation
+* ``samples/bluetooth/sap_demo``: hardware and BabbleSim demo application
+* ``zephyr/module.yml``: module metadata for west and external-module loading
 
-The trace is designed to be presentation-friendly:
+Quick start with ``EXTRA_ZEPHYR_MODULES``
+*****************************************
 
-* each line is prefixed with a colored ``[SAP FLOW]`` marker
-* it prints numbered phases such as ``FLOW 3/8`` and ``FLOW 6/8``
-* it explains which side sent which SAP message
-* it shows when certificates and transcript signatures were verified
-* it shows when session keys were derived and when protected services became
-  visible
-* it does not print private keys, session keys, or raw nonce material
+Use this path when you want to try the module from an arbitrary application
+without editing a west manifest.
 
-Raw packet logging
-******************
+.. code-block:: console
 
-Set ``CONFIG_SAP_PACKET_LOGGING=y`` to emit hexdumps of the exact SAP packets
-that cross the wire:
+   source /opt/ncs/sdks/ncs-main/activate-nrf.sh
+   export SAP_MODULE_ROOT=/home/h/Documents/Nordic/sap-zephyr-module
 
-* auth messages such as ``HELLO`` and ``CENTRAL_AUTH``
-* encrypted secure SAP frames such as ``CONFIRM`` and ``SECURE_DATA``
+   west build -p -d build-central-module \
+     -b nrf54l15dk/nrf54l15/cpuapp \
+     $SAP_MODULE_ROOT/samples/bluetooth/sap_demo \
+     -- \
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
+     -DEXTRA_CONF_FILE="central.conf;demo_logging.conf"
 
-The sample also provides ``packet_logging.conf`` as a ready-to-use overlay.
+   west build -p -d build-peripheral-module \
+     -b nrf54l15dk/nrf54l15/cpuapp \
+     $SAP_MODULE_ROOT/samples/bluetooth/sap_demo \
+     -- \
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
+     -DEXTRA_CONF_FILE="peripheral.conf;demo_logging.conf"
 
-When enabled, those lines carry a colored ``[SAP PACKET]`` prefix so they are
-easy to distinguish from the higher-level ``[SAP FLOW]`` trace.
+Adding SAP to a west workspace
+******************************
 
-Limitations
+If your application already uses west, add this repository to the workspace
+manifest or a submanifest and run ``west update``. Once the module is part of
+the workspace, Zephyr discovers it automatically through ``zephyr/module.yml``
+and you can build applications without passing ``EXTRA_ZEPHYR_MODULES``.
+
+Example submanifest:
+
+.. code-block:: yaml
+
+   manifest:
+     projects:
+       - name: sap
+         path: modules/lib/sap
+         url: <your-sap-repo-url>
+         revision: <branch-or-commit>
+
+Using SAP from your own application
+***********************************
+
+1. Add the module via west or ``EXTRA_ZEPHYR_MODULES``.
+2. Enable at least ``CONFIG_BT=y`` and ``CONFIG_SAP=y`` in the application.
+3. Include ``<sap/sap_service.h>`` in the application code.
+4. Provide:
+
+   * a ``struct sap_policy`` with your credential and CA material
+   * transport callbacks for auth and secure SAP frames
+   * application-specific gating once ``authenticated()`` fires
+
+For BLE transports, size the ATT/L2CAP path so the SAP auth packets fit in a
+single write or notification. The demo sample uses ``CONFIG_BT_L2CAP_TX_MTU=300``.
+
+The minimal public entry points are:
+
+* ``sap_init()``
+* ``sap_on_connected()``
+* ``sap_on_disconnected()``
+* ``sap_on_security_changed()``
+* ``sap_start()``
+* ``sap_handle_auth_rx()``
+* ``sap_handle_secure_rx()``
+* ``sap_send_secure()``
+
+Demo sample
 ***********
 
-* v1 uses compile-time credential blobs instead of provisioning.
-* ``nrf54l15bsim`` currently does not provide a reliable BLE encryption path
-  for this sample or the matching Zephyr privacy+bonding bsim test, so SAP
-  transport encryption is the simulator-facing coverage mechanism there.
-* The sample peripheral is intentionally single-connection so protected
-  services can be hidden with dynamic registration and not be exposed to new
-  unauthenticated connections.
-* The transport is custom GATT; production systems may prefer a more structured
-  application protocol on top.
+The demo sample still shows the full end-to-end flow, including:
+
+* dynamic registration of a protected GATT service after SAP success
+* shell-driven secure text exchange
+* peripheral button to central LED mapping on ``nrf54l15dk``
+
+For the full walkthrough and sample-specific behavior, see
+``samples/bluetooth/sap_demo/README.rst``.
