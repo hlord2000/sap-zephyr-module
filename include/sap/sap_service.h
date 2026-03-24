@@ -27,7 +27,7 @@ enum sap_session_state {
 	SAP_STATE_WAIT_CENTRAL_AUTH,
 	SAP_STATE_WAIT_PERIPHERAL_AUTH,
 	SAP_STATE_WAIT_CONFIRM,
-	SAP_STATE_WAIT_CONFIRM_ACK,
+	SAP_STATE_WAIT_CONFIRM_TX,
 	SAP_STATE_AUTHENTICATED,
 	SAP_STATE_FAILED,
 };
@@ -67,8 +67,10 @@ struct sap_session {
 };
 
 struct sap_callbacks {
-	int (*send_auth)(struct sap_session *session, const uint8_t *data, size_t len);
-	int (*send_secure)(struct sap_session *session, const uint8_t *data, size_t len);
+	int (*send_auth)(struct sap_session *session, uint8_t msg_type,
+			 const uint8_t *data, size_t len);
+	int (*send_secure)(struct sap_session *session, uint8_t msg_type,
+			   const uint8_t *data, size_t len);
 	void (*authenticated)(struct sap_session *session);
 	void (*authentication_failed)(struct sap_session *session, int reason);
 	void (*secure_payload_received)(struct sap_session *session, uint8_t msg_type,
@@ -100,6 +102,7 @@ bool sap_is_authenticated(const struct sap_session *session);
 int sap_start(struct sap_session *session);
 int sap_handle_auth_rx(struct sap_session *session, const uint8_t *data, size_t len);
 int sap_handle_secure_rx(struct sap_session *session, const uint8_t *data, size_t len);
+void sap_on_tx_complete(struct sap_session *session, uint8_t msg_type, int err);
 int sap_send_secure(struct sap_session *session, uint8_t msg_type,
 		    const uint8_t *payload, size_t len);
 

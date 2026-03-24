@@ -55,7 +55,6 @@ enum sap_message_type {
 	SAP_MSG_CENTRAL_AUTH = 3,
 	SAP_MSG_PERIPHERAL_AUTH = 4,
 	SAP_MSG_CONFIRM = 5,
-	SAP_MSG_CONFIRM_ACK = 6,
 };
 
 enum sap_signature_purpose {

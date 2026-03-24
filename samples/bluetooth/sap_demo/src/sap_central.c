@@ -77,14 +77,28 @@ struct sap_central_peer {
 	struct sap_gatt_handles handles;
 	struct bt_gatt_subscribe_params auth_sub_params;
 	struct bt_gatt_subscribe_params secure_sub_params;
+	struct bt_gatt_write_params auth_write_params;
+	struct bt_gatt_write_params secure_write_params;
 	struct bt_gatt_read_params protected_read_params;
 	struct bt_gatt_exchange_params mtu_params;
+	struct k_work auth_write_work;
+	struct k_work secure_write_work;
+	uint8_t auth_tx_buf[sizeof(struct sap_msg_central_auth)];
+	uint8_t secure_tx_buf[244];
+	uint8_t auth_tx_msg_type;
+	uint8_t secure_tx_msg_type;
+	uint16_t auth_tx_len;
+	uint16_t secure_tx_len;
 	bool in_use;
 	bool mtu_requested;
 	bool mtu_ready;
 	bool discovery_ready;
 	bool auth_subscribed;
 	bool secure_subscribed;
+	bool auth_write_queued;
+	bool auth_write_pending;
+	bool secure_write_queued;
+	bool secure_write_pending;
 	bool handshake_started;
 	bool sap_discovery_retry;
 	bool protected_discovery_retry;
@@ -122,8 +136,8 @@ static const char *session_state_str(enum sap_session_state state)
 		return "wait_peripheral_auth";
 	case SAP_STATE_WAIT_CONFIRM:
 		return "wait_confirm";
-	case SAP_STATE_WAIT_CONFIRM_ACK:
-		return "wait_confirm_ack";
+	case SAP_STATE_WAIT_CONFIRM_TX:
+		return "wait_confirm_tx";
 	case SAP_STATE_AUTHENTICATED:
 		return "authenticated";
 	case SAP_STATE_FAILED:
@@ -199,6 +213,8 @@ static void clear_remote_led(uint8_t peer_id)
 
 static void start_sap_service_discovery(struct sap_central_peer *peer);
 static void discover_protected_service(struct sap_central_peer *peer);
+static void auth_write_work_fn(struct k_work *work);
+static void secure_write_work_fn(struct k_work *work);
 #if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
 static void discover_dfu_service(struct sap_central_peer *peer);
 static int send_dfu_echo(struct sap_central_peer *peer, const char *text);
@@ -354,20 +370,132 @@ static void maybe_start_handshake(struct sap_central_peer *peer)
 	}
 }
 
-static int send_auth(struct sap_session *session, const uint8_t *data, size_t len)
+static void auth_write_cb(struct bt_conn *conn, uint8_t err,
+			  struct bt_gatt_write_params *params)
 {
-	struct sap_central_peer *peer = session->user_data;
+	struct sap_central_peer *peer = CONTAINER_OF(params, struct sap_central_peer,
+						     auth_write_params);
 
-	return bt_gatt_write_without_response(peer->conn, peer->handles.auth, data,
-					      len, false);
+	ARG_UNUSED(conn);
+
+	peer->auth_write_pending = false;
+	if ((peer->session != NULL) && peer->session->in_use) {
+		sap_on_tx_complete(peer->session, peer->auth_tx_msg_type, err);
+	}
 }
 
-static int send_secure(struct sap_session *session, const uint8_t *data, size_t len)
+static void secure_write_cb(struct bt_conn *conn, uint8_t err,
+			    struct bt_gatt_write_params *params)
+{
+	struct sap_central_peer *peer = CONTAINER_OF(params, struct sap_central_peer,
+						     secure_write_params);
+
+	ARG_UNUSED(conn);
+
+	peer->secure_write_pending = false;
+	if ((peer->session != NULL) && peer->session->in_use) {
+		sap_on_tx_complete(peer->session, peer->secure_tx_msg_type, err);
+	}
+}
+
+static void auth_write_work_fn(struct k_work *work)
+{
+	struct sap_central_peer *peer = CONTAINER_OF(work, struct sap_central_peer,
+						     auth_write_work);
+	int err;
+
+	if (!peer->in_use || (peer->conn == NULL) || !peer->auth_write_queued ||
+	    peer->auth_write_pending) {
+		return;
+	}
+
+	peer->auth_write_params.func = auth_write_cb;
+	peer->auth_write_params.handle = peer->handles.auth;
+	peer->auth_write_params.offset = 0U;
+	peer->auth_write_params.data = peer->auth_tx_buf;
+	peer->auth_write_params.length = peer->auth_tx_len;
+	peer->auth_write_queued = false;
+	peer->auth_write_pending = true;
+
+	err = bt_gatt_write(peer->conn, &peer->auth_write_params);
+	if (err != 0) {
+		peer->auth_write_pending = false;
+		if ((peer->session != NULL) && peer->session->in_use) {
+			sap_on_tx_complete(peer->session, peer->auth_tx_msg_type, err);
+		}
+	}
+}
+
+static void secure_write_work_fn(struct k_work *work)
+{
+	struct sap_central_peer *peer = CONTAINER_OF(work, struct sap_central_peer,
+						     secure_write_work);
+	int err;
+
+	if (!peer->in_use || (peer->conn == NULL) || !peer->secure_write_queued ||
+	    peer->secure_write_pending) {
+		return;
+	}
+
+	peer->secure_write_params.func = secure_write_cb;
+	peer->secure_write_params.handle = peer->handles.secure_rx;
+	peer->secure_write_params.offset = 0U;
+	peer->secure_write_params.data = peer->secure_tx_buf;
+	peer->secure_write_params.length = peer->secure_tx_len;
+	peer->secure_write_queued = false;
+	peer->secure_write_pending = true;
+
+	err = bt_gatt_write(peer->conn, &peer->secure_write_params);
+	if (err != 0) {
+		peer->secure_write_pending = false;
+		if ((peer->session != NULL) && peer->session->in_use) {
+			sap_on_tx_complete(peer->session, peer->secure_tx_msg_type, err);
+		}
+	}
+}
+
+static int send_auth(struct sap_session *session, uint8_t msg_type,
+		     const uint8_t *data, size_t len)
 {
 	struct sap_central_peer *peer = session->user_data;
 
-	return bt_gatt_write_without_response(peer->conn, peer->handles.secure_rx,
-					      data, len, false);
+	if (len > sizeof(peer->auth_tx_buf)) {
+		return -EMSGSIZE;
+	}
+
+	if (peer->auth_write_pending || peer->auth_write_queued) {
+		return -EBUSY;
+	}
+
+	memcpy(peer->auth_tx_buf, data, len);
+	peer->auth_tx_msg_type = msg_type;
+	peer->auth_tx_len = len;
+	peer->auth_write_queued = true;
+	(void)k_work_submit(&peer->auth_write_work);
+
+	return 0;
+}
+
+static int send_secure(struct sap_session *session, uint8_t msg_type,
+		       const uint8_t *data, size_t len)
+{
+	struct sap_central_peer *peer = session->user_data;
+
+	if (len > sizeof(peer->secure_tx_buf)) {
+		return -EMSGSIZE;
+	}
+
+	if (peer->secure_write_pending || peer->secure_write_queued) {
+		return -EBUSY;
+	}
+
+	memcpy(peer->secure_tx_buf, data, len);
+	peer->secure_tx_msg_type = msg_type;
+	peer->secure_tx_len = len;
+	peer->secure_write_queued = true;
+	(void)k_work_submit(&peer->secure_write_work);
+
+	return 0;
 }
 
 #if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
@@ -836,12 +964,6 @@ static void on_auth_failed(struct sap_session *session, int reason)
 static void on_secure_payload(struct sap_session *session, uint8_t msg_type,
 			      const uint8_t *data, size_t len)
 {
-	if (msg_type == SAP_DEMO_MSG_TEXT_ACK) {
-		LOG_INF("Secure ACK from peripheral %u: %.*s",
-			session->peer_cert.body.device_id, len, (const char *)data);
-		return;
-	}
-
 	if (msg_type == SAP_DEMO_MSG_BUTTON_STATE) {
 		bool pressed;
 
@@ -880,7 +1002,7 @@ static void discover_completed(struct bt_gatt_dm *dm, void *context)
 	peer->discovery_ready = true;
 
 	peer->auth_sub_params.notify = auth_notif_cb;
-	peer->auth_sub_params.value = BT_GATT_CCC_NOTIFY;
+	peer->auth_sub_params.value = BT_GATT_CCC_INDICATE;
 	peer->auth_sub_params.value_handle = peer->handles.auth;
 	peer->auth_sub_params.ccc_handle = peer->handles.auth_ccc;
 	atomic_set_bit(peer->auth_sub_params.flags, BT_GATT_SUBSCRIBE_FLAG_VOLATILE);
@@ -890,7 +1012,7 @@ static void discover_completed(struct bt_gatt_dm *dm, void *context)
 	}
 
 	peer->secure_sub_params.notify = secure_notif_cb;
-	peer->secure_sub_params.value = BT_GATT_CCC_NOTIFY;
+	peer->secure_sub_params.value = BT_GATT_CCC_INDICATE;
 	peer->secure_sub_params.value_handle = peer->handles.secure_tx;
 	peer->secure_sub_params.ccc_handle = peer->handles.secure_tx_ccc;
 	atomic_set_bit(peer->secure_sub_params.flags,
@@ -1152,6 +1274,8 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		if (!peers[i].in_use) {
 			peer = &peers[i];
 			memset(peer, 0, sizeof(*peer));
+			k_work_init(&peer->auth_write_work, auth_write_work_fn);
+			k_work_init(&peer->secure_write_work, secure_write_work_fn);
 			peer->in_use = true;
 			peer->conn = bt_conn_ref(conn);
 #if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
@@ -1200,6 +1324,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 		reason, bt_hci_err_to_str(reason));
 
 	if (peer != NULL) {
+		(void)k_work_cancel(&peer->auth_write_work);
+		(void)k_work_cancel(&peer->secure_write_work);
 		if (peer->session != NULL) {
 			peer_id = peer->session->peer_cert.body.device_id;
 		}

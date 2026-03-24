@@ -72,6 +72,18 @@ static const struct bt_data sap_ad[] = {
 	BT_DATA(BT_DATA_UUID128_ALL, sap_service_uuid, sizeof(sap_service_uuid)),
 };
 
+struct sap_indication_ctx {
+	struct bt_gatt_indicate_params params;
+	struct k_work work;
+	struct sap_session *session;
+	const struct bt_gatt_attr *attr;
+	uint8_t msg_type;
+	uint16_t len;
+	bool queued;
+	bool pending;
+	uint8_t buffer[244];
+};
+
 static ssize_t sap_auth_write(struct bt_conn *conn,
 			      const struct bt_gatt_attr *attr,
 			      const void *buf, uint16_t len, uint16_t offset,
@@ -87,15 +99,15 @@ static ssize_t protected_status_read(struct bt_conn *conn,
 BT_GATT_SERVICE_DEFINE(sap_svc,
 	BT_GATT_PRIMARY_SERVICE(BT_UUID_SAP_SERVICE),
 	BT_GATT_CHARACTERISTIC(BT_UUID_SAP_AUTH,
-			       BT_GATT_CHRC_WRITE_WITHOUT_RESP | BT_GATT_CHRC_NOTIFY,
+			       BT_GATT_CHRC_WRITE | BT_GATT_CHRC_INDICATE,
 			       BT_GATT_PERM_WRITE, NULL, sap_auth_write, NULL),
 	BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 	BT_GATT_CHARACTERISTIC(BT_UUID_SAP_SECURE_TX,
-			       BT_GATT_CHRC_NOTIFY,
+			       BT_GATT_CHRC_INDICATE,
 			       BT_GATT_PERM_NONE, NULL, NULL, NULL),
 	BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 	BT_GATT_CHARACTERISTIC(BT_UUID_SAP_SECURE_RX,
-			       BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+			       BT_GATT_CHRC_WRITE,
 			       BT_GATT_PERM_WRITE, NULL, sap_secure_rx_write, NULL));
 
 static struct bt_gatt_attr protected_attrs[] = {
@@ -110,6 +122,9 @@ static struct bt_gatt_service protected_svc = BT_GATT_SERVICE(protected_attrs);
 
 #define SAP_AUTH_ATTR_INDEX 2
 #define SAP_SECURE_TX_ATTR_INDEX 5
+
+static struct sap_indication_ctx auth_indication;
+static struct sap_indication_ctx secure_indication;
 
 #if defined(CONFIG_SAP_SHELL) || defined(CONFIG_SAP_DK_IO)
 static struct sap_session *active_session(bool require_authenticated)
@@ -256,15 +271,89 @@ static void clear_bond_on_security_failure(struct bt_conn *conn,
 	}
 }
 
-static int send_auth(struct sap_session *session, const uint8_t *data, size_t len)
+static void indicate_cb(struct bt_conn *conn,
+			struct bt_gatt_indicate_params *params, uint8_t err)
 {
-	return bt_gatt_notify(session->conn, &sap_svc.attrs[SAP_AUTH_ATTR_INDEX], data,
-			      len);
+	struct sap_indication_ctx *ctx = CONTAINER_OF(params, struct sap_indication_ctx,
+						      params);
+
+	ARG_UNUSED(conn);
+
+	if ((ctx->session != NULL) && ctx->session->in_use) {
+		sap_on_tx_complete(ctx->session, ctx->msg_type, err);
+	}
 }
 
-static int send_secure(struct sap_session *session, const uint8_t *data, size_t len)
+static void indicate_destroy(struct bt_gatt_indicate_params *params)
 {
-	return bt_gatt_notify(session->conn, &sap_svc.attrs[SAP_SECURE_TX_ATTR_INDEX],
+	struct sap_indication_ctx *ctx = CONTAINER_OF(params, struct sap_indication_ctx,
+						      params);
+
+	ctx->pending = false;
+}
+
+static void indicate_work_fn(struct k_work *work)
+{
+	struct sap_indication_ctx *ctx = CONTAINER_OF(work, struct sap_indication_ctx, work);
+	int err;
+
+	if ((ctx->session == NULL) || !ctx->session->in_use || (ctx->session->conn == NULL) ||
+	    !ctx->queued || ctx->pending) {
+		return;
+	}
+
+	ctx->params.attr = ctx->attr;
+	ctx->params.func = indicate_cb;
+	ctx->params.destroy = indicate_destroy;
+	ctx->params.data = ctx->buffer;
+	ctx->params.len = ctx->len;
+	ctx->queued = false;
+	ctx->pending = true;
+
+	err = bt_gatt_indicate(ctx->session->conn, &ctx->params);
+	if (err != 0) {
+		ctx->pending = false;
+		if ((ctx->session != NULL) && ctx->session->in_use) {
+			sap_on_tx_complete(ctx->session, ctx->msg_type, err);
+		}
+	}
+}
+
+static int send_indication(struct sap_session *session, struct sap_indication_ctx *ctx,
+			   const struct bt_gatt_attr *attr, uint8_t msg_type,
+			   const uint8_t *data, size_t len)
+{
+	if (len > sizeof(ctx->buffer)) {
+		return -EMSGSIZE;
+	}
+
+	if (ctx->pending || ctx->queued) {
+		return -EBUSY;
+	}
+
+	memcpy(ctx->buffer, data, len);
+	ctx->session = session;
+	ctx->attr = attr;
+	ctx->msg_type = msg_type;
+	ctx->len = len;
+	ctx->queued = true;
+	(void)k_work_submit(&ctx->work);
+
+	return 0;
+}
+
+static int send_auth(struct sap_session *session, uint8_t msg_type,
+		     const uint8_t *data, size_t len)
+{
+	return send_indication(session, &auth_indication, &sap_svc.attrs[SAP_AUTH_ATTR_INDEX],
+			      msg_type, data, len);
+}
+
+static int send_secure(struct sap_session *session, uint8_t msg_type,
+		       const uint8_t *data, size_t len)
+{
+	return send_indication(session, &secure_indication,
+			      &sap_svc.attrs[SAP_SECURE_TX_ATTR_INDEX], msg_type,
 			      data, len);
 }
 
@@ -292,19 +381,12 @@ static void on_auth_failed(struct sap_session *session, int reason)
 static void on_secure_payload(struct sap_session *session, uint8_t msg_type,
 			      const uint8_t *data, size_t len)
 {
-	char response[48];
-	int resp_len;
-
 	if (msg_type != SAP_DEMO_MSG_TEXT) {
 		return;
 	}
 
 	LOG_INF("Secure payload from central: %.*s", len, (const char *)data);
 	SAP_TRACE("FLOW post-auth: peripheral accepted encrypted application payload from central");
-	resp_len = snprintk(response, sizeof(response), "ack-%u",
-			    session->ctx->policy.local_credential->cert.body.device_id);
-	(void)sap_send_secure(session, SAP_DEMO_MSG_TEXT_ACK,
-			      (const uint8_t *)response, (size_t)resp_len);
 }
 
 #if defined(CONFIG_SAP_DK_IO)
@@ -491,6 +573,14 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	LOG_INF("Peripheral disconnected reason 0x%02x %s", reason,
 		bt_hci_err_to_str(reason));
 	connection_active = false;
+	(void)k_work_cancel(&auth_indication.work);
+	(void)k_work_cancel(&secure_indication.work);
+	auth_indication.queued = false;
+	auth_indication.pending = false;
+	auth_indication.session = NULL;
+	secure_indication.queued = false;
+	secure_indication.pending = false;
+	secure_indication.session = NULL;
 	gated_services_disable();
 	sap_on_disconnected(&sap_ctx, conn);
 	schedule_advertising_restart(K_MSEC(SAP_ADV_RESTART_DELAY_MS));
@@ -682,6 +772,9 @@ int sap_peripheral_run(const struct sap_policy *policy)
 		LOG_ERR("Failed to initialize SAP core (%d)", err);
 		return 0;
 	}
+
+	k_work_init(&auth_indication.work, indicate_work_fn);
+	k_work_init(&secure_indication.work, indicate_work_fn);
 
 	dfu_service_disable();
 

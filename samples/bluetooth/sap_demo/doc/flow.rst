@@ -98,9 +98,11 @@ The messages are:
 4. ``PERIPHERAL_AUTH`` from the peripheral
    Contains the peripheral ephemeral ECDH public key and a signature over the
    canonical transcript including both ephemeral keys.
-5. ``SECURE_CONFIRM`` and ``SECURE_ACK``
-   Both sides prove they derived the same SAP session keys by exchanging
-   AES-CCM protected messages.
+5. ``SECURE_CONFIRM``
+   The central proves it derived the same SAP session keys by sending an
+   AES-CCM protected confirmation frame over an ATT-confirmed transport. The
+   peripheral accepts the session when that frame decrypts correctly, and the
+   central marks the session authenticated once the ATT confirmation completes.
 
 Transcript ordering is canonical:
 
@@ -298,7 +300,7 @@ Typical central-side trace:
    FLOW 6/8 central verified peripheral transcript signature
    FLOW 6/8 central derived SAP session material with peer 1 using ECDH + HKDF
    FLOW 7/8 central -> peripheral: CONFIRM (encrypted proof of shared session key)
-   FLOW 8/8 central accepted CONFIRM_ACK and marked SAP session authenticated
+   FLOW 8/8 central observed ATT confirmation for CONFIRM and marked SAP session authenticated
    FLOW app-io: central mapped peripheral 1 button state 0 onto LED1
    FLOW post-auth: central discovered the protected service on peer 1
    FLOW post-auth: central successfully read the gated protected characteristic
@@ -316,7 +318,7 @@ Typical peripheral-side trace:
    FLOW 6/8 peripheral derived SAP session material with peer 0 using ECDH + HKDF
    FLOW 6/8 peripheral 1 -> central: PERIPHERAL_AUTH (ephemeral ECDH key + transcript signature)
    FLOW 7/8 peripheral accepted CONFIRM and proved key agreement
-   FLOW 8/8 peripheral -> central: CONFIRM_ACK and SAP session authenticated
+   FLOW 8/8 peripheral marked SAP session authenticated after confirmed CONFIRM reception
    FLOW app-io: peripheral sent button 1 state 0 to the central
    FLOW post-auth: peripheral exposed the protected service after SAP success
 

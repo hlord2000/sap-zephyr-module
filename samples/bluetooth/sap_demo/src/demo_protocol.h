@@ -21,7 +21,6 @@
 
 enum sap_demo_message_type {
 	SAP_DEMO_MSG_TEXT = SAP_APP_MSG_TYPE_MIN,
-	SAP_DEMO_MSG_TEXT_ACK,
 	SAP_DEMO_MSG_BUTTON_STATE,
 };
 

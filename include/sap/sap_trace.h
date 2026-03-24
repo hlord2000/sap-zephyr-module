@@ -39,8 +39,6 @@ static inline const char *sap_msg_type_str(uint8_t type)
 		return "PERIPHERAL_AUTH";
 	case SAP_MSG_CONFIRM:
 		return "CONFIRM";
-	case SAP_MSG_CONFIRM_ACK:
-		return "CONFIRM_ACK";
 	default:
 		return (type >= SAP_APP_MSG_TYPE_MIN) ? "APP" : "UNKNOWN";
 	}

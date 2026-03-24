@@ -102,6 +102,21 @@ static void sap_fail(struct sap_session *session, int reason)
 	}
 }
 
+static void sap_notify_authenticated(struct sap_session *session, const char *trace_msg)
+{
+	session->state = SAP_STATE_AUTHENTICATED;
+
+	if (trace_msg != NULL) {
+		SAP_TRACE("%s", trace_msg);
+	}
+
+	if (!session->authenticated_notified &&
+	    session->ctx->callbacks.authenticated != NULL) {
+		session->authenticated_notified = true;
+		session->ctx->callbacks.authenticated(session);
+	}
+}
+
 static int sap_random(uint8_t *buffer, size_t len)
 {
 	return (psa_generate_random(buffer, len) == PSA_SUCCESS) ? 0 : -EIO;
@@ -579,8 +594,8 @@ int sap_start(struct sap_session *session)
 	session->state = SAP_STATE_WAIT_PERIPHERAL_CHALLENGE;
 	SAP_TRACE("FLOW 3/8 central -> peripheral: HELLO (fresh central nonce)");
 
-	return session->ctx->callbacks.send_auth(session, (const uint8_t *)&msg,
-						 sizeof(msg));
+	return session->ctx->callbacks.send_auth(session, SAP_MSG_HELLO,
+						 (const uint8_t *)&msg, sizeof(msg));
 }
 
 static int sap_send_peripheral_challenge(struct sap_session *session)
@@ -627,8 +642,9 @@ static int sap_send_peripheral_challenge(struct sap_session *session)
 		  session->ctx->policy.local_credential->cert.body.device_id,
 		  session->ctx->policy.local_credential->cert.body.group_id);
 	sap_trace_auth_packet(session, "tx", (const uint8_t *)&msg, sizeof(msg));
-	return session->ctx->callbacks.send_auth(session, (const uint8_t *)&msg,
-						 sizeof(msg));
+	return session->ctx->callbacks.send_auth(session,
+						 SAP_MSG_PERIPHERAL_CHALLENGE,
+						 (const uint8_t *)&msg, sizeof(msg));
 }
 
 static int sap_send_central_auth(struct sap_session *session)
@@ -686,8 +702,8 @@ static int sap_send_central_auth(struct sap_session *session)
 		  "(certificate + ephemeral ECDH key + transcript signature)",
 		  session->ctx->policy.local_credential->cert.body.device_id);
 	sap_trace_auth_packet(session, "tx", (const uint8_t *)&msg, sizeof(msg));
-	return session->ctx->callbacks.send_auth(session, (const uint8_t *)&msg,
-						 sizeof(msg));
+	return session->ctx->callbacks.send_auth(session, SAP_MSG_CENTRAL_AUTH,
+						 (const uint8_t *)&msg, sizeof(msg));
 }
 
 static int sap_send_peripheral_auth(struct sap_session *session)
@@ -746,8 +762,8 @@ static int sap_send_peripheral_auth(struct sap_session *session)
 		  "(ephemeral ECDH key + transcript signature)",
 		  session->ctx->policy.local_credential->cert.body.device_id);
 	sap_trace_auth_packet(session, "tx", (const uint8_t *)&msg, sizeof(msg));
-	return session->ctx->callbacks.send_auth(session, (const uint8_t *)&msg,
-						 sizeof(msg));
+	return session->ctx->callbacks.send_auth(session, SAP_MSG_PERIPHERAL_AUTH,
+						 (const uint8_t *)&msg, sizeof(msg));
 }
 
 static int sap_handle_hello(struct sap_session *session,
@@ -890,7 +906,7 @@ static int sap_handle_peripheral_auth(struct sap_session *session,
 		return err;
 	}
 
-	session->state = SAP_STATE_WAIT_CONFIRM_ACK;
+	session->state = SAP_STATE_WAIT_CONFIRM_TX;
 	SAP_TRACE("FLOW 7/8 central -> peripheral: CONFIRM "
 		  "(encrypted proof of shared session key)");
 	return sap_send_secure(session, SAP_MSG_CONFIRM,
@@ -967,7 +983,7 @@ int sap_send_secure(struct sap_session *session, uint8_t msg_type,
 
 	sap_trace_secure_packet(session, "tx", buffer, out_len);
 
-	return session->ctx->callbacks.send_secure(session, buffer, out_len);
+	return session->ctx->callbacks.send_secure(session, msg_type, buffer, out_len);
 }
 
 int sap_handle_secure_rx(struct sap_session *session, const uint8_t *data, size_t len)
@@ -1000,40 +1016,20 @@ int sap_handle_secure_rx(struct sap_session *session, const uint8_t *data, size_
 			break;
 		}
 
-		session->state = SAP_STATE_AUTHENTICATED;
 		SAP_TRACE("FLOW 7/8 peripheral accepted CONFIRM and proved key agreement");
-		if (!session->authenticated_notified &&
-		    session->ctx->callbacks.authenticated != NULL) {
-			session->authenticated_notified = true;
-			session->ctx->callbacks.authenticated(session);
-		}
-
-		SAP_TRACE("FLOW 8/8 peripheral -> central: CONFIRM_ACK and SAP session authenticated");
-		err = sap_send_secure(session, SAP_MSG_CONFIRM_ACK,
-				      (const uint8_t *)SAP_CONFIRM_TEXT,
-				      SAP_CONFIRM_TEXT_LEN);
-		break;
-
-	case SAP_MSG_CONFIRM_ACK:
-		if ((session->role != SAP_ROLE_CENTRAL) ||
-		    (session->state != SAP_STATE_WAIT_CONFIRM_ACK) ||
-		    (plaintext_len != SAP_CONFIRM_TEXT_LEN) ||
-		    (memcmp(plaintext, SAP_CONFIRM_TEXT, SAP_CONFIRM_TEXT_LEN) != 0)) {
-			err = -EPROTO;
-			break;
-		}
-
-		session->state = SAP_STATE_AUTHENTICATED;
-		SAP_TRACE("FLOW 8/8 central accepted CONFIRM_ACK and marked SAP session authenticated");
-		if (!session->authenticated_notified &&
-		    session->ctx->callbacks.authenticated != NULL) {
-			session->authenticated_notified = true;
-			session->ctx->callbacks.authenticated(session);
-		}
+		sap_notify_authenticated(session,
+					"FLOW 8/8 peripheral marked SAP session authenticated after confirmed CONFIRM reception");
 		err = 0;
 		break;
 
 	default:
+		if ((session->role == SAP_ROLE_CENTRAL) &&
+		    (session->state == SAP_STATE_WAIT_CONFIRM_TX)) {
+			sap_notify_authenticated(
+				session,
+				"FLOW 8/8 central accepted first post-confirm SAP frame and marked SAP session authenticated");
+		}
+
 		if (!sap_is_authenticated(session)) {
 			err = -EACCES;
 			break;
@@ -1054,4 +1050,24 @@ int sap_handle_secure_rx(struct sap_session *session, const uint8_t *data, size_
 	}
 
 	return err;
+}
+
+void sap_on_tx_complete(struct sap_session *session, uint8_t msg_type, int err)
+{
+	if ((session == NULL) || !session->in_use || (session->state == SAP_STATE_FAILED)) {
+		return;
+	}
+
+	if (err != 0) {
+		sap_fail(session, (err < 0) ? err : -EIO);
+		return;
+	}
+
+	if ((msg_type == SAP_MSG_CONFIRM) &&
+	    (session->role == SAP_ROLE_CENTRAL) &&
+	    (session->state == SAP_STATE_WAIT_CONFIRM_TX)) {
+		sap_notify_authenticated(
+			session,
+			"FLOW 8/8 central observed ATT confirmation for CONFIRM and marked SAP session authenticated");
+	}
 }
