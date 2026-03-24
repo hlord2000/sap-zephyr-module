@@ -22,7 +22,10 @@ The sample uses:
 * Per-device ``secp256r1`` ECDSA identity keys and compact SAP certificates.
 * Ephemeral ECDH over ``secp256r1`` to derive per-connection session keys.
 * HKDF-SHA256 to derive an AES-CCM key and per-direction nonce bases.
-* A protected GATT service that is registered only after SAP succeeds.
+* Two gated GATT services that are registered only after SAP succeeds:
+
+  * a protected demo status service
+  * the standard Bluetooth MCUmgr SMP transport used for DFU
 
 Hardware notes
 **************
@@ -32,10 +35,15 @@ boards confirmed the full real-target path:
 
 * BLE pairing reached ``BT_SECURITY_L2`` on both boards.
 * Mutual SAP authentication completed in both directions.
-* The peripheral registered the protected GATT service only after SAP success.
+* The peripheral registered the protected demo service only after SAP success.
+* The peripheral registered the MCUmgr DFU SMP service only after SAP success.
 * The central discovered and read the protected service only after SAP auth.
+* The central discovered the gated DFU SMP service only after SAP auth.
+* The central completed an MCUmgr OS echo request only after SAP auth.
 * Secure shell traffic worked in both directions on the UART shell.
 * A peripheral button event drove the assigned LED on the central.
+* Resetting one side forced BLE reconnect, reran SAP, and re-verified both
+  gated services on the next link.
 
 The real target uses the CRACEN PSA backend. Its HKDF implementation limits
 the ``info`` field to 128 bytes, so the sample hashes the ECDH transcript
@@ -202,6 +210,7 @@ Central role:
 
    sap peers
    sap send 1 hello from central shell
+   sap dfu_echo 1 hello through gated dfu
    sap send all fleet-wide test message
 
 Peripheral role:
@@ -229,13 +238,16 @@ Behavior
    and both sides derive the same SAP session material.
 5. Both directions then use AES-CCM protected SAP frames.
 6. After authentication, the peripheral dynamically registers a protected
-   service. The central discovers it and reads a status characteristic.
+   status service and the DFU SMP service. The central discovers the protected
+   service and reads a status characteristic.
 7. The application demo path then stays behind SAP:
 
    * arbitrary shell text is sent inside encrypted SAP frames
    * the peripheral's DK Button 1 sends a secure button-state event
    * the central maps peripheral IDs ``1..4`` onto LEDs ``1..4``
    * peripherals above ID ``4`` stay authenticated but have no LED assignment
+   * the central probes the gated DFU SMP service with an MCUmgr OS echo
+     request and gets the response only after SAP succeeds
 
 Verbose demo logs
 *****************
@@ -278,5 +290,10 @@ Limitations
 * The sample peripheral is intentionally single-connection so protected
   services can be hidden with dynamic registration and not be exposed to new
   unauthenticated connections.
+* The sample peripheral uses
+  ``CONFIG_MCUMGR_TRANSPORT_BT_PERM_RW_ENCRYPT=y`` in ``peripheral.conf`` so
+  the gated DFU SMP service matches the sample's ``BT_SECURITY_L2`` BLE
+  security level. If an application needs authenticated MCUmgr permissions, it
+  should also raise the BLE security requirement accordingly.
 * The transport is custom GATT; production systems may prefer a more structured
   application protocol on top.

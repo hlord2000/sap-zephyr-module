@@ -19,6 +19,13 @@
 
 #include <bluetooth/gatt_dm.h>
 
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+#include <bluetooth/services/dfu_smp.h>
+#include <zcbor_common.h>
+#include <zcbor_decode.h>
+#include <zcbor_encode.h>
+#endif
+
 #if defined(CONFIG_SAP_SHELL)
 #include <zephyr/shell/shell.h>
 #endif
@@ -36,6 +43,17 @@ LOG_MODULE_REGISTER(sap_central, CONFIG_SAP_LOG_LEVEL);
 #define SAP_SCAN_RESTART_DELAY_MS 250
 #define SAP_SECURITY_FAILURE_RETRY_MS 1000
 #define SAP_REMOTE_LED_MAX 4U
+#define SAP_DFU_ECHO_DELAY_MS 200
+
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+#define SAP_DFU_CBOR_ENCODER_STATE_NUM 2
+#define SAP_DFU_CBOR_DECODER_STATE_NUM 3
+#define SAP_DFU_CBOR_MAP_MAX_ELEMENT_CNT 2
+#define SAP_DFU_CBOR_BUFFER_SIZE 160
+#define SAP_DFU_KEY_LEN_MAX 2
+#define SAP_DFU_VALUE_LEN_MAX 96
+#define SAP_DFU_ECHO_TEXT_MAX 48
+#endif
 
 struct sap_gatt_handles {
 	uint16_t auth;
@@ -45,6 +63,13 @@ struct sap_gatt_handles {
 	uint16_t secure_rx;
 	uint16_t protected_status;
 };
+
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+struct sap_dfu_buffer {
+	struct bt_dfu_smp_header header;
+	uint8_t payload[SAP_DFU_CBOR_BUFFER_SIZE];
+};
+#endif
 
 struct sap_central_peer {
 	struct bt_conn *conn;
@@ -63,6 +88,15 @@ struct sap_central_peer {
 	bool handshake_started;
 	bool sap_discovery_retry;
 	bool protected_discovery_retry;
+	bool protected_service_ready;
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+	struct bt_dfu_smp dfu_smp;
+	struct sap_dfu_buffer dfu_rsp;
+	bool dfu_service_ready;
+	bool dfu_discovery_retry;
+	bool dfu_echo_pending;
+	bool dfu_echo_complete;
+#endif
 };
 
 static struct sap_context sap_ctx;
@@ -165,10 +199,18 @@ static void clear_remote_led(uint8_t peer_id)
 
 static void start_sap_service_discovery(struct sap_central_peer *peer);
 static void discover_protected_service(struct sap_central_peer *peer);
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+static void discover_dfu_service(struct sap_central_peer *peer);
+static int send_dfu_echo(struct sap_central_peer *peer, const char *text);
+static void dfu_echo_work_fn(struct k_work *work);
+#endif
 static void gatt_retry_fn(struct k_work *work);
 static void scan_restart_fn(struct k_work *work);
 K_WORK_DELAYABLE_DEFINE(gatt_retry_work, gatt_retry_fn);
 K_WORK_DELAYABLE_DEFINE(scan_restart_work, scan_restart_fn);
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+K_WORK_DELAYABLE_DEFINE(dfu_echo_work, dfu_echo_work_fn);
+#endif
 
 static bool ad_has_sap_service_cb(struct bt_data *data, void *user_data)
 {
@@ -196,6 +238,13 @@ static void schedule_gatt_retry(void)
 {
 	(void)k_work_reschedule(&gatt_retry_work, K_MSEC(100));
 }
+
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+static void schedule_dfu_echo(k_timeout_t delay)
+{
+	(void)k_work_reschedule(&dfu_echo_work, delay);
+}
+#endif
 
 static bool should_clear_bond(enum bt_security_err err)
 {
@@ -321,6 +370,185 @@ static int send_secure(struct sap_session *session, const uint8_t *data, size_t 
 					      data, len, false);
 }
 
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+static void dfu_smp_on_error(struct bt_dfu_smp *dfu_smp, int err)
+{
+	struct sap_central_peer *peer = CONTAINER_OF(dfu_smp, struct sap_central_peer,
+						     dfu_smp);
+
+	LOG_ERR("DFU SMP client error on peer %u (%d)",
+		peer->session != NULL ? peer->session->peer_cert.body.device_id : 0U,
+		err);
+}
+
+static const struct bt_dfu_smp_init_params dfu_smp_init_params = {
+	.error_cb = dfu_smp_on_error,
+};
+
+static void dfu_start_next_step(struct sap_central_peer *peer)
+{
+	if ((peer == NULL) || !peer->in_use || (peer->session == NULL) ||
+	    !sap_is_authenticated(peer->session) || peer->dfu_service_ready) {
+		return;
+	}
+
+	discover_dfu_service(peer);
+}
+
+static void dfu_echo_rsp_proc(struct bt_dfu_smp *dfu_smp)
+{
+	struct sap_central_peer *peer = CONTAINER_OF(dfu_smp, struct sap_central_peer, dfu_smp);
+	const struct bt_dfu_smp_rsp_state *rsp_state = bt_dfu_smp_rsp_state(dfu_smp);
+	uint8_t *buf = (uint8_t *)&peer->dfu_rsp;
+
+	if (rsp_state->offset + rsp_state->chunk_size > sizeof(peer->dfu_rsp)) {
+		LOG_ERR("DFU SMP response overflow on peer %u",
+			peer->session->peer_cert.body.device_id);
+		return;
+	}
+
+	memcpy(buf + rsp_state->offset, rsp_state->data, rsp_state->chunk_size);
+
+	if (!bt_dfu_smp_rsp_total_check(dfu_smp)) {
+		return;
+	}
+
+	if (peer->dfu_rsp.header.op != 3U ||
+	    peer->dfu_rsp.header.group_h8 != 0U ||
+	    peer->dfu_rsp.header.group_l8 != 0U ||
+	    peer->dfu_rsp.header.id != 0U) {
+		LOG_ERR("Unexpected DFU SMP echo response from peer %u",
+			peer->session->peer_cert.body.device_id);
+		return;
+	}
+
+	{
+		size_t payload_len = (((size_t)peer->dfu_rsp.header.len_h8) << 8) |
+				      peer->dfu_rsp.header.len_l8;
+		zcbor_state_t zsd[SAP_DFU_CBOR_DECODER_STATE_NUM];
+		struct zcbor_string value = {0};
+		char key[SAP_DFU_KEY_LEN_MAX];
+		char response[SAP_DFU_VALUE_LEN_MAX];
+		bool ok;
+
+		zcbor_new_decode_state(zsd, ARRAY_SIZE(zsd), peer->dfu_rsp.payload, payload_len,
+				       1, NULL, 0);
+
+		ok = zcbor_map_start_decode(zsd);
+		ok = ok && zcbor_tstr_decode(zsd, &value);
+		if (!ok || (value.len != 1U) || (value.value[0] != 'r')) {
+			LOG_ERR("Failed to decode DFU SMP echo key from peer %u",
+				peer->session->peer_cert.body.device_id);
+			return;
+		}
+
+		key[0] = value.value[0];
+		key[1] = '\0';
+
+		ok = zcbor_tstr_decode(zsd, &value);
+		ok = ok && zcbor_map_end_decode(zsd);
+		if (!ok || (value.len >= sizeof(response))) {
+			LOG_ERR("Failed to decode DFU SMP echo value from peer %u",
+				peer->session->peer_cert.body.device_id);
+			return;
+		}
+
+		memcpy(response, value.value, value.len);
+		response[value.len] = '\0';
+
+		peer->dfu_echo_complete = true;
+		LOG_INF("DFU SMP echo from peripheral %u: %s=%s",
+			peer->session->peer_cert.body.device_id, key, response);
+		SAP_TRACE("FLOW post-auth: central verified gated DFU SMP service on peer %u",
+			  peer->session->peer_cert.body.device_id);
+	}
+}
+
+static int send_dfu_echo(struct sap_central_peer *peer, const char *text)
+{
+	struct sap_dfu_buffer smp_cmd;
+	zcbor_state_t zse[SAP_DFU_CBOR_ENCODER_STATE_NUM];
+	size_t payload_len;
+
+	if ((peer == NULL) || !peer->in_use || (peer->session == NULL)) {
+		return -ENOTCONN;
+	}
+
+	if (!peer->dfu_service_ready) {
+		return -EAGAIN;
+	}
+
+	memset(&smp_cmd, 0, sizeof(smp_cmd));
+	memset(&peer->dfu_rsp, 0, sizeof(peer->dfu_rsp));
+
+	zcbor_new_encode_state(zse, ARRAY_SIZE(zse), smp_cmd.payload,
+			       sizeof(smp_cmd.payload), 0);
+
+	if (!zcbor_map_start_encode(zse, SAP_DFU_CBOR_MAP_MAX_ELEMENT_CNT) ||
+	    !zcbor_tstr_put_lit(zse, "d") ||
+	    !zcbor_tstr_put_term(zse, text, strlen(text) + 1U) ||
+	    !zcbor_map_end_encode(zse, SAP_DFU_CBOR_MAP_MAX_ELEMENT_CNT)) {
+		return -EFAULT;
+	}
+
+	payload_len = (size_t)(zse->payload - smp_cmd.payload);
+	smp_cmd.header.op = 2U;
+	smp_cmd.header.flags = 0U;
+	smp_cmd.header.len_h8 = (uint8_t)((payload_len >> 8) & 0xffU);
+	smp_cmd.header.len_l8 = (uint8_t)(payload_len & 0xffU);
+	smp_cmd.header.group_h8 = 0U;
+	smp_cmd.header.group_l8 = 0U;
+	smp_cmd.header.seq = 0U;
+	smp_cmd.header.id = 0U;
+
+	return bt_dfu_smp_command(&peer->dfu_smp, dfu_echo_rsp_proc,
+				  sizeof(smp_cmd.header) + payload_len, &smp_cmd);
+}
+
+static void dfu_echo_work_fn(struct k_work *work)
+{
+	size_t i;
+	bool retry_needed = false;
+
+	ARG_UNUSED(work);
+
+	for (i = 0; i < ARRAY_SIZE(peers); i++) {
+		struct sap_central_peer *peer = &peers[i];
+		char echo_text[SAP_DFU_ECHO_TEXT_MAX];
+		int err;
+
+		if (!peer->in_use || !peer->dfu_service_ready || !peer->dfu_echo_pending ||
+		    peer->dfu_echo_complete || (peer->session == NULL) ||
+		    !sap_is_authenticated(peer->session)) {
+			continue;
+		}
+
+		snprintk(echo_text, sizeof(echo_text), "sap-dfu-%u",
+			 peer->session->peer_cert.body.device_id);
+		err = send_dfu_echo(peer, echo_text);
+		if (err == 0) {
+			peer->dfu_echo_pending = false;
+			SAP_TRACE("FLOW post-auth: central sent DFU SMP echo probe to peer %u",
+				  peer->session->peer_cert.body.device_id);
+			continue;
+		}
+
+		if ((err == -EAGAIN) || (err == -EBUSY) || (err == -ENOMEM)) {
+			retry_needed = true;
+			continue;
+		}
+
+		peer->dfu_echo_pending = false;
+		LOG_ERR("Failed to send DFU SMP echo to peer %u (%d)",
+			peer->session->peer_cert.body.device_id, err);
+	}
+
+	if (retry_needed) {
+		schedule_dfu_echo(K_MSEC(SAP_DFU_ECHO_DELAY_MS));
+	}
+}
+#endif
+
 static uint8_t auth_notif_cb(struct bt_conn *conn,
 			     struct bt_gatt_subscribe_params *params,
 			     const void *data, uint16_t length)
@@ -367,17 +595,27 @@ static uint8_t protected_read_cb(struct bt_conn *conn, uint8_t err,
 				 struct bt_gatt_read_params *params,
 				 const void *data, uint16_t length)
 {
-	ARG_UNUSED(params);
+	struct sap_central_peer *peer = CONTAINER_OF(params, struct sap_central_peer,
+						     protected_read_params);
+	ARG_UNUSED(conn);
 
 	if (err != 0U) {
 		LOG_ERR("Protected service read failed (0x%02x)", err);
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+		dfu_start_next_step(peer);
+#endif
 		return BT_GATT_ITER_STOP;
 	}
 
 	if (data != NULL && length > 0U) {
+		peer->protected_service_ready = true;
 		LOG_INF("Protected service payload: %.*s", length, (const char *)data);
 		SAP_TRACE("FLOW post-auth: central successfully read the gated protected characteristic");
 	}
+
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+	dfu_start_next_step(peer);
+#endif
 
 	return BT_GATT_ITER_STOP;
 }
@@ -471,6 +709,58 @@ static const struct bt_gatt_dm_cb protected_dm_cb = {
 	.error_found = protected_discovery_error,
 };
 
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+static void dfu_service_discovered(struct bt_gatt_dm *dm, void *context)
+{
+	struct sap_central_peer *peer = context;
+
+	int err = bt_dfu_smp_handles_assign(dm, &peer->dfu_smp);
+	bt_gatt_dm_data_release(dm);
+	if (err != 0) {
+		LOG_ERR("Failed to assign DFU SMP handles (%d)", err);
+		return;
+	}
+
+	peer->dfu_service_ready = true;
+	peer->dfu_echo_pending = true;
+	LOG_INF("DFU SMP service discovered on peripheral %u",
+		peer->session->peer_cert.body.device_id);
+	SAP_TRACE("FLOW post-auth: central discovered the gated DFU SMP service on peer %u",
+		  peer->session->peer_cert.body.device_id);
+	schedule_dfu_echo(K_MSEC(SAP_DFU_ECHO_DELAY_MS));
+}
+
+static void dfu_service_not_found(struct bt_conn *conn, void *context)
+{
+	struct sap_central_peer *peer = context;
+
+	ARG_UNUSED(conn);
+	LOG_WRN("DFU SMP service not found after SAP auth");
+	if (peer != NULL && peer->in_use) {
+		peer->dfu_discovery_retry = true;
+		schedule_gatt_retry();
+	}
+}
+
+static void dfu_discovery_error(struct bt_conn *conn, int err, void *context)
+{
+	struct sap_central_peer *peer = context;
+
+	ARG_UNUSED(conn);
+	LOG_ERR("DFU SMP discovery failed (%d)", err);
+	if (peer != NULL && peer->in_use) {
+		peer->dfu_discovery_retry = true;
+		schedule_gatt_retry();
+	}
+}
+
+static const struct bt_gatt_dm_cb dfu_dm_cb = {
+	.completed = dfu_service_discovered,
+	.service_not_found = dfu_service_not_found,
+	.error_found = dfu_discovery_error,
+};
+#endif
+
 static void discover_protected_service(struct sap_central_peer *peer)
 {
 	int err;
@@ -488,6 +778,25 @@ static void discover_protected_service(struct sap_central_peer *peer)
 		LOG_ERR("Protected service discovery failed to start (%d)", err);
 	}
 }
+
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+static void discover_dfu_service(struct sap_central_peer *peer)
+{
+	int err;
+
+	peer->dfu_discovery_retry = false;
+	err = bt_gatt_dm_start(peer->conn, BT_UUID_DFU_SMP_SERVICE, &dfu_dm_cb, peer);
+	if ((err == -EALREADY) || (err == -EBUSY)) {
+		peer->dfu_discovery_retry = true;
+		schedule_gatt_retry();
+		return;
+	}
+
+	if (err != 0) {
+		LOG_ERR("DFU SMP discovery failed to start (%d)", err);
+	}
+}
+#endif
 
 static void on_authenticated(struct sap_session *session)
 {
@@ -701,6 +1010,12 @@ static void gatt_retry_fn(struct k_work *work)
 		if (peer->protected_discovery_retry) {
 			discover_protected_service(peer);
 		}
+
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+		if (peer->dfu_discovery_retry) {
+			discover_dfu_service(peer);
+		}
+#endif
 	}
 }
 
@@ -736,6 +1051,7 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 		BT_GAP_SCAN_FAST_INTERVAL,
 		BT_GAP_SCAN_FAST_INTERVAL);
 	const struct bt_le_conn_param *conn_param = BT_LE_CONN_PARAM_DEFAULT;
+	struct bt_conn *existing_conn;
 	char addr_str[BT_ADDR_LE_STR_LEN];
 	int err;
 	bool has_sap_service = false;
@@ -759,6 +1075,14 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 
 	bt_addr_le_to_str(addr, addr_str, sizeof(addr_str));
 	LOG_INF("Found peripheral candidate %s RSSI %d", addr_str, rssi);
+
+	existing_conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, addr);
+	if (existing_conn != NULL) {
+		bt_conn_unref(existing_conn);
+		SAP_TRACE("FLOW reset-recovery: central ignored advertisement from %s because a connection object already exists",
+			  addr_str);
+		return;
+	}
 
 	err = bt_le_scan_stop();
 	if (err != 0) {
@@ -830,6 +1154,9 @@ static void connected(struct bt_conn *conn, uint8_t err)
 			memset(peer, 0, sizeof(*peer));
 			peer->in_use = true;
 			peer->conn = bt_conn_ref(conn);
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+			(void)bt_dfu_smp_init(&peer->dfu_smp, &dfu_smp_init_params);
+#endif
 			break;
 		}
 	}
@@ -877,6 +1204,9 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 			peer_id = peer->session->peer_cert.body.device_id;
 		}
 
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+		peer->dfu_echo_pending = false;
+#endif
 		sap_on_disconnected(&sap_ctx, conn);
 		bt_conn_unref(peer->conn);
 		memset(peer, 0, sizeof(*peer));
@@ -995,10 +1325,16 @@ static int cmd_sap_peers(const struct shell *sh, size_t argc, char **argv)
 
 		peer_id = peer->session->peer_cert.body.device_id;
 		shell_print(sh,
-			    "peer_id=%u state=%s security_ready=%u authenticated=%u led=%s",
+			    "peer_id=%u state=%s security_ready=%u authenticated=%u protected=%u dfu=%u led=%s",
 			    peer_id, session_state_str(peer->session->state),
 			    peer->session->security_ready ? 1U : 0U,
 			    sap_is_authenticated(peer->session) ? 1U : 0U,
+			    peer->protected_service_ready ? 1U : 0U,
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+			    peer->dfu_service_ready ? 1U : 0U,
+#else
+			    0U,
+#endif
 			    led_name_for_peer_id(peer_id));
 		any = true;
 	}
@@ -1082,9 +1418,52 @@ static int cmd_sap_send(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+static int cmd_sap_dfu_echo(const struct shell *sh, size_t argc, char **argv)
+{
+	char payload[96];
+	char *endptr = NULL;
+	unsigned long peer_id_ul;
+	struct sap_central_peer *peer;
+	int len;
+	int err;
+
+	len = join_shell_args(argc, argv, 2U, payload, sizeof(payload));
+	if (len < 0) {
+		shell_error(sh, "Text is too long for one DFU echo payload");
+		return len;
+	}
+
+	peer_id_ul = strtoul(argv[1], &endptr, 10);
+	if ((argv[1][0] == '\0') || (endptr == NULL) || (*endptr != '\0') ||
+	    (peer_id_ul > UINT8_MAX)) {
+		shell_error(sh, "Peer id must be a decimal number");
+		return -EINVAL;
+	}
+
+	peer = peer_from_device_id((uint8_t)peer_id_ul);
+	if (peer == NULL) {
+		shell_error(sh, "Peer %lu is not authenticated", peer_id_ul);
+		return -ENOTCONN;
+	}
+
+	err = send_dfu_echo(peer, payload);
+	if (err != 0) {
+		shell_error(sh, "Failed to send DFU echo to peer %lu (%d)", peer_id_ul, err);
+		return err;
+	}
+
+	shell_print(sh, "Sent DFU SMP echo to peer %lu: %s", peer_id_ul, payload);
+	return 0;
+}
+#endif
+
 SHELL_STATIC_SUBCMD_SET_CREATE(sap_cmds,
 	SHELL_CMD(peers, NULL, "List SAP peer state and LED mapping", cmd_sap_peers),
 	SHELL_CMD_ARG(send, NULL, "send <peer_id|all> <text...>", cmd_sap_send, 3, 13),
+#if defined(CONFIG_SAP_DEMO_DFU_CLIENT)
+	SHELL_CMD_ARG(dfu_echo, NULL, "dfu_echo <peer_id> <text...>", cmd_sap_dfu_echo, 3, 13),
+#endif
 	SHELL_SUBCMD_SET_END
 );
 

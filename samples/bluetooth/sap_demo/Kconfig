@@ -87,4 +87,31 @@ config SAP_DK_IO
 	  central, peripherals 1..4 map to LEDs 1..4. Additional peripherals
 	  remain authenticated but do not receive an LED assignment.
 
+config SAP_DEMO_GATED_DFU_SERVICE
+	bool "Expose gated MCUmgr DFU SMP service after SAP"
+	default y if !BOARD_NRF54L15BSIM
+	default n if BOARD_NRF54L15BSIM
+	help
+	  Demonstrate how SAP can hide the standard Bluetooth MCUmgr SMP/DFU
+	  service until application-layer authentication succeeds. On hardware,
+	  the central then verifies the service by sending an MCUmgr OS echo
+	  request after SAP completes.
+
+config SAP_DEMO_DFU_CLIENT
+	bool
+	default y if SAP_ROLE_CENTRAL && SAP_DEMO_GATED_DFU_SERVICE
+	select BT_DFU_SMP
+	select ZCBOR
+
+config SAP_DEMO_DFU_SERVER
+	bool
+	default y if SAP_ROLE_PERIPHERAL && SAP_DEMO_GATED_DFU_SERVICE
+	select CRC
+	select MCUMGR
+	select MCUMGR_GRP_OS
+	select MCUMGR_TRANSPORT_BT
+	select MCUMGR_TRANSPORT_BT_DYNAMIC_SVC_REGISTRATION
+	select NET_BUF
+	select ZCBOR
+
 endmenu

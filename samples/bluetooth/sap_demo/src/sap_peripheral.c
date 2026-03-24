@@ -16,6 +16,10 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/hci.h>
 
+#if defined(CONFIG_SAP_DEMO_DFU_SERVER)
+#include <zephyr/mgmt/mcumgr/transport/smp_bt.h>
+#endif
+
 #if defined(CONFIG_SAP_SHELL)
 #include <zephyr/shell/shell.h>
 #endif
@@ -39,6 +43,9 @@ LOG_MODULE_REGISTER(sap_peripheral, CONFIG_SAP_LOG_LEVEL);
 
 static struct sap_context sap_ctx;
 static bool protected_registered;
+#if defined(CONFIG_SAP_DEMO_DFU_SERVER)
+static bool dfu_registered;
+#endif
 static bool connection_active;
 static bool advertising_restart_pending;
 static void advertising_start(void);
@@ -156,6 +163,68 @@ static void protected_service_enable(void)
 	SAP_TRACE("FLOW post-auth: peripheral exposed the protected service after SAP success");
 }
 
+#if defined(CONFIG_SAP_DEMO_DFU_SERVER)
+static void dfu_service_disable(void)
+{
+	int err;
+
+	err = smp_bt_unregister();
+	if ((err != 0) && (err != -ENOENT)) {
+		LOG_WRN("Failed to unregister DFU SMP service (%d)", err);
+		return;
+	}
+
+	dfu_registered = false;
+
+	if (err == 0) {
+		LOG_INF("DFU SMP service unregistered");
+		SAP_TRACE("FLOW post-auth: peripheral hid the DFU SMP service");
+	}
+}
+
+static void dfu_service_enable(void)
+{
+	int err;
+
+	if (dfu_registered) {
+		return;
+	}
+
+	err = smp_bt_register();
+	if (err == -EALREADY) {
+		dfu_registered = true;
+	} else if (err != 0) {
+		LOG_ERR("Failed to register DFU SMP service (%d)", err);
+		return;
+	} else {
+		dfu_registered = true;
+	}
+
+	LOG_INF("DFU SMP service registered");
+	SAP_TRACE("FLOW post-auth: peripheral exposed the DFU SMP service after SAP success");
+}
+#else
+static void dfu_service_disable(void)
+{
+}
+
+static void dfu_service_enable(void)
+{
+}
+#endif
+
+static void gated_services_disable(void)
+{
+	dfu_service_disable();
+	protected_service_disable();
+}
+
+static void gated_services_enable(void)
+{
+	protected_service_enable();
+	dfu_service_enable();
+}
+
 static bool should_clear_bond(enum bt_security_err err)
 {
 	switch (err) {
@@ -204,7 +273,7 @@ static void on_authenticated(struct sap_session *session)
 	LOG_INF("SAP authenticated with central %u", session->peer_cert.body.device_id);
 	SAP_TRACE("FLOW post-auth: peripheral now allows protected-service access for central %u",
 		  session->peer_cert.body.device_id);
-	protected_service_enable();
+	gated_services_enable();
 
 #if defined(CONFIG_SAP_DK_IO)
 	(void)k_work_submit(&button_report_work);
@@ -214,7 +283,7 @@ static void on_authenticated(struct sap_session *session)
 static void on_auth_failed(struct sap_session *session, int reason)
 {
 	LOG_ERR("SAP auth failed on peripheral side (%d)", reason);
-	protected_service_disable();
+	gated_services_disable();
 	if (session->conn != NULL) {
 		(void)bt_conn_disconnect(session->conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 	}
@@ -422,7 +491,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	LOG_INF("Peripheral disconnected reason 0x%02x %s", reason,
 		bt_hci_err_to_str(reason));
 	connection_active = false;
-	protected_service_disable();
+	gated_services_disable();
 	sap_on_disconnected(&sap_ctx, conn);
 	schedule_advertising_restart(K_MSEC(SAP_ADV_RESTART_DELAY_MS));
 }
@@ -527,8 +596,15 @@ static int cmd_sap_status(const struct shell *sh, size_t argc, char **argv)
 	button_state = button_pressed ? 1U : 0U;
 	#endif
 
-	shell_print(sh, "connected=1 authenticated=%u central_id=%u button1=%u",
+	shell_print(sh, "connected=1 authenticated=%u protected=%u dfu=%u central_id=%u button1=%u",
 		    sap_is_authenticated(session) ? 1U : 0U,
+#if defined(CONFIG_SAP_DEMO_DFU_SERVER)
+		    protected_registered ? 1U : 0U,
+		    dfu_registered ? 1U : 0U,
+#else
+		    protected_registered ? 1U : 0U,
+		    0U,
+#endif
 		    session->peer_cert.body.device_id,
 		    button_state);
 	return 0;
@@ -606,6 +682,8 @@ int sap_peripheral_run(const struct sap_policy *policy)
 		LOG_ERR("Failed to initialize SAP core (%d)", err);
 		return 0;
 	}
+
+	dfu_service_disable();
 
 #if defined(CONFIG_SAP_DK_IO)
 	err = dk_buttons_init(button_changed);

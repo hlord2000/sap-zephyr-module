@@ -13,7 +13,7 @@ SAP adds an application-layer trust check on top of BLE:
 * SAP proves that both applications hold credentials signed by the same SAP CA.
 * SAP derives a fresh per-connection session key and uses it to protect SAP
   payloads with AES-CCM.
-* The protected GATT service is hidden until SAP succeeds.
+* Gated GATT services remain hidden until SAP succeeds.
 
 Provisioning model
 ******************
@@ -131,35 +131,43 @@ The derived output is split into:
 The transcript is hashed before HKDF because the nRF54L15 CRACEN backend
 limits HKDF ``info`` to 128 bytes.
 
-6. Protected service gating
-===========================
+6. Gated service registration
+=============================
 
 The sample exposes two layers of GATT:
 
 * the always-present SAP control service
-* the protected example service
+* dynamically registered post-auth services
 
-The protected example service is intentionally global and dynamic. On the
-peripheral it is:
+The post-auth services are intentionally global and dynamic. On the peripheral
+they are:
 
 * not registered before SAP authentication
 * registered only after the authenticated callback fires
 * unregistered again on auth failure or disconnect
 
+The sample demonstrates two gated services:
+
+* a protected demo status service
+* the standard Bluetooth MCUmgr SMP service used for DFU
+
 The read callback also checks ``sap_is_authenticated()`` for the active
 connection. That means new unauthenticated connections do not see or use the
-protected endpoint.
+protected endpoint even if the service was previously visible on an older
+connection.
 
 7. Application traffic after SAP
 ================================
 
 Once SAP reaches the authenticated state, application traffic stays inside the
-SAP AES-CCM envelope.
+SAP AES-CCM envelope and the post-auth GATT services become available.
 
-The sample demonstrates two post-auth paths:
+The sample demonstrates four post-auth paths:
 
 * secure text payloads sent from the UART shell
 * secure button-state events from the peripheral
+* discovery and read of the protected demo status service
+* discovery and use of the gated DFU SMP service via an MCUmgr OS echo request
 
 Those application message IDs and the protected-service UUIDs are defined in
 the demo application, not in the reusable SAP module. Consumer applications are
@@ -178,6 +186,11 @@ For scripted demos, the peripheral shell also exposes ``sap button
 pressed|released|toggle``. That helper emits the same secure application event
 as the physical button path, so shell-driven tests and real button presses
 exercise the same central-side logic.
+
+The central shell also exposes ``sap dfu_echo <peer_id> <text...>``. That
+command sends a standard MCUmgr OS echo request over the gated DFU SMP
+transport, which is useful when demonstrating that a real Nordic DFU service
+can remain completely hidden until SAP authentication finishes.
 
 Why the peripheral stays single-connection
 ******************************************
@@ -249,8 +262,9 @@ If the peripheral resets while the central stays up:
    with fresh nonces and fresh ephemeral keys.
 4. If the bond is stale, BLE security fails once, the old bond is cleared, and
    the next reconnect pairs cleanly.
-5. The peripheral re-registers the protected service only after the fresh SAP
-   handshake succeeds.
+5. The peripheral re-registers the protected service and the DFU SMP service
+   only after the fresh SAP handshake succeeds.
+6. The central discovers those services again and re-runs the DFU echo probe.
 
 If the central resets while the peripheral stays up, the same logic applies in
 the opposite direction.
