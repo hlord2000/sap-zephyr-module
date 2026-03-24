@@ -4,6 +4,9 @@
 # SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
 #
 
+# Work around Kconfig's lack of commas in macro arguments.
+DT_CHOSEN_Z_SHELL_UART := zephyr,shell-uart
+
 mainmenu "Secure Application Pairing Demo"
 
 source "Kconfig.zephyr"
@@ -53,12 +56,14 @@ config SAP_SHELL
 	default y if !BOARD_NRF54L15BSIM
 	default n if BOARD_NRF54L15BSIM
 	select SHELL
-	select SHELL_BACKEND_SERIAL
 	select SHELL_VT100_COLORS
+	depends on $(dt_chosen_enabled,$(DT_CHOSEN_Z_SHELL_UART)) || BOARD_NRF54L15BSIM
 	help
 	  Enable a UART shell with SAP demo commands. The central build can list
 	  peers and send secure text to one peer or all peers. The peripheral
-	  build can send secure text to the connected central.
+	  build can send secure text to the connected central. Boards without a
+	  non-secure ``zephyr,shell-uart`` chosen node leave the shell disabled
+	  by default so the demo can still run without a UART.
 
 if SAP_SHELL
 
