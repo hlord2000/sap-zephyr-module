@@ -369,10 +369,10 @@ That script:
 - establishes the SAP secure channel
 - queries the root for the authenticated leaf table
 
-## Compared With Silicon Labs CBAP
+## Compared With A Competitor's Certificate Authentication
 
-Silicon Labs CBAP and this SAP module solve related problems, but they are not
-the same design.
+A competitor's certificate-authentication design and this SAP module solve related problems,
+but they are not the same design.
 
 ### Similarities
 
@@ -383,16 +383,16 @@ the same design.
 
 ### Differences
 
-| Topic | This SAP repo | Silicon Labs CBAP |
+| Topic | This SAP repo | Competitor certificate-authentication approach |
 | --- | --- | --- |
 | Layer | Application-layer protocol over custom BLE GATT | Pairing/authentication flow tied to BLE pairing |
 | When trust is established | After BLE connect, optionally after BLE link encryption | During certificate-based pairing |
 | Post-auth transport | Default: SAP AES-CCM secure frames. Optional sample mode: SAP-authenticated BLE SC OOB followed by BLE L4 link transport | Standard authenticated encrypted BLE link after pairing |
-| Trust material | App-owned CA and certificates generated or provisioned by the product | Silicon Labs device certificate / Secure Vault-based flow |
-| Service gating | Explicitly hides protected services until SAP succeeds | CBAP authenticates pairing; application gating is separate |
+| Trust material | App-owned CA and certificates generated or provisioned by the product | Vendor-owned device certificate / secure element flow |
+| Service gating | Explicitly hides protected services until SAP succeeds | Pairing authenticates the link; application gating is separate |
 | Topology | Root-to-many-leaf demo plus upstream controller | Documented primarily as authenticated peer pairing |
 
-CBAP-style systems push more of the trust decision down into the BLE pairing
+Competitor certificate-authentication systems push more of the trust decision down into the BLE pairing
 layer. This repo deliberately keeps an application-owned certificate exchange
 and policy check above BLE, even when it can also carry LE Secure Connections
 OOB material.
