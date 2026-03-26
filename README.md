@@ -5,27 +5,22 @@ post-auth secure channel on top of BLE. This repository contains:
 
 - a reusable SAP library under `include/sap` and `subsys/bluetooth/sap`
 - a reference demo under `samples/bluetooth/sap_demo`
-- a Python controller under `scripts/sap_root_controller.py` that acts like an
-  upstream app talking to a root node over BLE
+- a Python controller under `scripts/sap_root_controller.py` that acts like an upstream app talking to a root node over BLE
+- precompiled binaries for the sample under hex/
 
 SAP adds a certificate-backed application identity check, derives a fresh session key, and only then exposes protected functionality (dynamic BLE services supported).
 
 The demo also supports an alternate post-auth transport mode:
 
-- default mode: SAP authenticates peers and then encrypts each app packet in a
-  SAP AES-CCM secure frame
-- BLE SC OOB mode: SAP authenticates peers, carries BLE Secure Connections OOB
-  data inside the signed auth exchange, and then relies on the BLE L4 encrypted
-  link instead of wrapping every app packet in SAP AEAD
+- default mode: SAP authenticates peers and then encrypts each app packet in a SAP AES-CCM secure frame
+- BLE SC OOB mode: SAP authenticates peers, carries BLE Secure Connections OOB data inside the signed auth exchange, and then relies on the BLE L4 encrypted link instead of wrapping every app packet in SAP AEAD
 
 ## What The Module Does
 
 - runs a mutual certificate-based challenge/response handshake over BLE
 - optionally waits for normal BLE security first
-- derives a fresh per-connection AES-CCM session key from ephemeral P-256 ECDH
-  plus HKDF-SHA256
-- wraps post-auth application messages in SAP secure frames, or optionally uses
-  BLE L4 link security after SAP-authenticated LE SC OOB pairing
+- derives a fresh per-connection AES-CCM session key from ephemeral P-256 ECDH plus HKDF-SHA256
+- wraps post-auth application messages in SAP secure frames, or optionally uses BLE L4 link security after SAP-authenticated LE SC OOB pairing
 - lets the application register or expose services only after SAP succeeds
 
 In the demo, the protected surface includes:
@@ -401,20 +396,7 @@ OOB material.
 
 Pure stack-level OOB pairing is not enough for every deployment target.
 
-In particular, mobile platforms such as iOS impose practical limits on how much
-of a custom LE Secure Connections OOB pairing flow an app can directly drive or
-own. Because of that, this repo keeps the SAP certificate handshake and policy
-layer explicit:
-
-- it works as a product-owned trust decision instead of assuming the platform
-  pairing UX is fully controllable
-- it lets a root node authenticate and manage many leaves even when the
-  upstream app is not the BLE pairing authority for each leaf
-- it still supports a BLE SC OOB transport mode on root-to-leaf links when the
-  embedded devices themselves can exchange OOB data inside SAP
-
-That is the main reason the default design is not "just do OOB pairing and stop
-there."
+In particular, mobile platforms such as iOS do not permit OOB pairing. Because of that, this repo keeps the SAP certificate handshake and policy layer explicit:
 
 ## Current Limits And Intentional Demo Simplifications
 
@@ -423,15 +405,3 @@ there."
   demo credential generator.
 - The sample shows how to gate DFU, but that DFU behavior is a sample feature,
   not a requirement of the SAP library itself.
-- The library currently uses a `uint32_t` secure-frame counter per session.
-  That is fine for the demo, but a long-lived production session should add an
-  explicit rekey or disconnect before counter wrap.
-
-## Where To Read Next
-
-- `samples/bluetooth/sap_demo/README.rst`: build matrix, sample behavior, and
-  platform-specific notes
-- `samples/bluetooth/sap_demo/doc/flow.rst`: handshake and reconnect details
-- `include/sap/sap_service.h`: public API entry points
-- `subsys/bluetooth/sap/sap_service.c`: handshake, key derivation, and secure
-  frame processing
