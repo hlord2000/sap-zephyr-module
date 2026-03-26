@@ -256,9 +256,9 @@ west build -p --no-sysbuild \
   -DEXTRA_ZEPHYR_MODULES="$SAP_MODULE_ROOT"
 ```
 
-### Build A Root/Leaf Pair With BLE SC OOB Transport
+### Build A Root/Leaf Setup With BLE SC OOB Transport
 
-This is the mode that was tested on two `nrf54l15dk` boards:
+This is the mode that was tested on three `nrf54l15dk` boards:
 
 ```bash
 west build -p --no-sysbuild \
@@ -281,12 +281,33 @@ west build -p --no-sysbuild \
   -DEXTRA_ZEPHYR_MODULES="$SAP_MODULE_ROOT" \
   -DCONFIG_SAP_USE_BLE_SC_OOB_PAIRING=y \
   -DCONFIG_SAP_DEMO_PERIPHERAL_ID=1
+
+west build -p --no-sysbuild \
+  -d build-sap-oob-leaf-id2 \
+  -b nrf54l15dk/nrf54l15/cpuapp \
+  --extra-conf peripheral.conf \
+  --extra-conf peripheral_no_dfu.conf \
+  --extra-conf demo_logging.conf \
+  "$SAP_MODULE_ROOT/samples/bluetooth/sap_demo" -- \
+  -DEXTRA_ZEPHYR_MODULES="$SAP_MODULE_ROOT" \
+  -DCONFIG_SAP_USE_BLE_SC_OOB_PAIRING=y \
+  -DCONFIG_SAP_DEMO_PERIPHERAL_ID=2
 ```
 
 The validated live result after flashing was:
 
-- root controller `status`: `peer_id=1 state=7 flags=auth,protected,led`
-- root controller `select 1`: `select_status=0 selected_peer_id=1`
+- root shell `sap peers`:
+  - `peer_id=1 state=authenticated security_ready=1 authenticated=1 protected=1 dfu=0 led=LED1 pattern=1 selected=0`
+  - `peer_id=2 state=authenticated security_ready=1 authenticated=1 protected=1 dfu=0 led=LED2 pattern=1 selected=0`
+- leaf 1 shell `sap status`:
+  - `connected=1 authenticated=1 protected=1 dfu=0 central_id=0 button1=0 pattern=1`
+- leaf 2 shell `sap status`:
+  - `connected=1 authenticated=1 protected=1 dfu=0 central_id=0 button1=0 pattern=1`
+- upstream controller `status`:
+  - `peer_id=1 state=7 flags=auth,protected,led led_index=1 pattern_id=1`
+  - `peer_id=2 state=7 flags=auth,protected,led led_index=2 pattern_id=1`
+- upstream controller `select 1`:
+  - `select_status=0 selected_peer_id=1`
 
 ### Build A Leaf
 
@@ -371,16 +392,29 @@ the same design.
 | Service gating | Explicitly hides protected services until SAP succeeds | CBAP authenticates pairing; application gating is separate |
 | Topology | Root-to-many-leaf demo plus upstream controller | Documented primarily as authenticated peer pairing |
 
-According to Silicon Labs' CBAP page, CBAP removes the need for QR/passkey/NFC
-pairing steps and signs pairing data with each device's secret key. Silicon
-Labs also positions it as supported on Secure Vault-High and Secure Vault-Mid
-devices. That is a different trust anchor and deployment story from this repo,
-which is intentionally product-owned and Zephyr-module-oriented.
+CBAP-style systems push more of the trust decision down into the BLE pairing
+layer. This repo deliberately keeps an application-owned certificate exchange
+and policy check above BLE, even when it can also carry LE Secure Connections
+OOB material.
 
-Useful references:
+### Why Not Use Only OOB Pairing?
 
-- https://www.silabs.com/wireless/bluetooth/cbap
-- https://docs.silabs.com/bluetooth/latest/authenticating-devices-using-device-certificates/
+Pure stack-level OOB pairing is not enough for every deployment target.
+
+In particular, mobile platforms such as iOS impose practical limits on how much
+of a custom LE Secure Connections OOB pairing flow an app can directly drive or
+own. Because of that, this repo keeps the SAP certificate handshake and policy
+layer explicit:
+
+- it works as a product-owned trust decision instead of assuming the platform
+  pairing UX is fully controllable
+- it lets a root node authenticate and manage many leaves even when the
+  upstream app is not the BLE pairing authority for each leaf
+- it still supports a BLE SC OOB transport mode on root-to-leaf links when the
+  embedded devices themselves can exchange OOB data inside SAP
+
+That is the main reason the default design is not "just do OOB pairing and stop
+there."
 
 ## Current Limits And Intentional Demo Simplifications
 
