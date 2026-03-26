@@ -18,14 +18,15 @@ choice SAP_ROLE
 	default SAP_ROLE_CENTRAL
 
 config SAP_ROLE_CENTRAL
-	bool "Central"
+	bool "Root node"
 	select BT_CENTRAL
 	select BT_OBSERVER
 	select BT_GATT_CLIENT
 	select BT_GATT_DM
+	select BT_PERIPHERAL
 
 config SAP_ROLE_PERIPHERAL
-	bool "Peripheral"
+	bool "Leaf node"
 	select BT_PERIPHERAL
 
 endchoice
@@ -39,6 +40,15 @@ config SAP_ALLOWED_CENTRAL_ID
 	range 0 255
 	default 0
 
+config SAP_UPSTREAM_ALLOWED_CENTRAL_ID
+	int "Allowed upstream controller identifier"
+	range 0 255
+	default 42
+	depends on SAP_ROLE_CENTRAL
+	help
+	  Device identifier that the root node accepts on its upstream SAP
+	  controller link. The default is used by the Bleak host demo script.
+
 config SAP_REQUIRE_BLE_ENCRYPTION
 	bool "Require BLE link encryption before SAP"
 	default n if BOARD_NRF54L15BSIM
@@ -50,6 +60,31 @@ config SAP_REQUIRE_BLE_ENCRYPTION
 	  BLE security procedure reliably on that simulator target. The sample
 	  still exercises SAP mutual authentication and SAP-level AES-CCM
 	  transport protection there.
+
+config SAP_UPSTREAM_REQUIRE_BLE_ENCRYPTION
+	bool "Require BLE link encryption on the root upstream controller link"
+	depends on SAP_ROLE_CENTRAL
+	default y
+	help
+	  Keep BLE SMP/link encryption as a prerequisite for the root node's
+	  upstream SAP controller link. Disable this only for interop demos where
+	  the external controller stack cannot complete BLE security reliably and
+	  you still want to demonstrate SAP mutual authentication plus SAP-level
+	  encrypted transport on that upstream link.
+
+config SAP_USE_BLE_SC_OOB_PAIRING
+	bool "Use in-band exchanged BLE Secure Connections OOB for post-auth transport"
+	depends on BT_SMP
+	default n
+	help
+	  Prototype a CBAP-like transport flow for root-to-leaf links. SAP still
+	  performs certificate-based authentication, but the authenticated nodes
+	  exchange LE Secure Connections OOB data during the SAP handshake, then
+	  upgrade the BLE link to Security Level 4 and rely on the BLE stack for
+	  transport encryption. SAP application payloads then travel as plaintext
+	  over the authenticated encrypted BLE link instead of using SAP AES-CCM
+	  on every packet. The root's upstream controller link remains on the
+	  original SAP encrypted transport path.
 
 config SAP_SHELL
 	bool "Enable SAP shell commands"
@@ -68,7 +103,7 @@ config SAP_SHELL
 if SAP_SHELL
 
 config SHELL_STACK_SIZE
-	default 3072
+	default 8192
 
 config SHELL_CMD_BUFF_SIZE
 	default 256
@@ -124,11 +159,24 @@ config SAP_DEMO_DFU_SERVER
 	bool
 	default y if SAP_ROLE_PERIPHERAL && SAP_DEMO_GATED_DFU_SERVICE
 	select CRC
+	select IMG_MANAGER
 	select MCUMGR
+	select MCUMGR_GRP_IMG
 	select MCUMGR_GRP_OS
 	select MCUMGR_TRANSPORT_BT
 	select MCUMGR_TRANSPORT_BT_DYNAMIC_SVC_REGISTRATION
 	select NET_BUF
+	select STREAM_FLASH
 	select ZCBOR
+
+config SAP_DEMO_LED_PATTERN_ID
+	int "Leaf status LED pattern identifier"
+	range 1 2
+	default 1
+	depends on SAP_ROLE_PERIPHERAL
+	help
+	  Distinguishes visible leaf firmware variants for the DFU demo. Pattern
+	  1 is the default image. Pattern 2 is intended for the post-DFU image
+	  so the result is obvious on-device.
 
 endmenu

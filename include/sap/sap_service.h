@@ -28,6 +28,7 @@ enum sap_session_state {
 	SAP_STATE_WAIT_PERIPHERAL_AUTH,
 	SAP_STATE_WAIT_CONFIRM,
 	SAP_STATE_WAIT_CONFIRM_TX,
+	SAP_STATE_WAIT_BLE_PAIRING,
 	SAP_STATE_AUTHENTICATED,
 	SAP_STATE_FAILED,
 };
@@ -39,6 +40,8 @@ struct sap_policy {
 	uint8_t expected_group_id;
 	uint8_t allowed_central_id;
 	bool require_ble_encryption;
+	bool use_ble_sc_oob_pairing;
+	bool use_link_security_for_secure_transport;
 };
 
 struct sap_session {
@@ -51,6 +54,7 @@ struct sap_session {
 	bool security_ready;
 	bool session_key_ready;
 	bool authenticated_notified;
+	bt_security_t security_level;
 	struct sap_certificate peer_cert;
 	uint8_t local_nonce[SAP_NONCE_LEN];
 	uint8_t peer_nonce[SAP_NONCE_LEN];
@@ -58,8 +62,10 @@ struct sap_session {
 	size_t local_ecdh_public_len;
 	uint8_t peer_ecdh_public[SAP_ECDH_PUBLIC_KEY_LEN];
 	size_t peer_ecdh_public_len;
-	uint8_t tx_nonce_base[SAP_AEAD_NONCE_BASE_LEN];
-	uint8_t rx_nonce_base[SAP_AEAD_NONCE_BASE_LEN];
+	struct bt_le_oob_sc_data local_oob_sc;
+	struct bt_le_oob_sc_data peer_oob_sc;
+	bool local_oob_ready;
+	bool peer_oob_ready;
 	uint32_t tx_counter;
 	uint32_t rx_counter;
 	psa_key_id_t local_ecdh_key_id;

@@ -23,7 +23,8 @@ The sample uses:
 * A shared SAP root CA public key compiled into the image.
 * Per-device ``secp256r1`` ECDSA identity keys and compact SAP certificates.
 * Ephemeral ECDH over ``secp256r1`` to derive per-connection session keys.
-* HKDF-SHA256 to derive an AES-CCM key and per-direction nonce bases.
+* HKDF-SHA256 to derive an AES-CCM key, with each secure frame carrying an
+  8-byte random nonce base plus a 32-bit packet counter.
 * Two gated GATT services that are registered only after SAP succeeds:
 
   * a protected demo status service
@@ -108,72 +109,80 @@ Build the BabbleSim central:
 .. code-block:: console
 
    west build -p -d build-sap-central -b nrf54l15bsim/nrf54l15/cpuapp \
+     --extra-conf central.conf \
      $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
-     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
-     -DEXTRA_CONF_FILE=central.conf
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT
 
 Build the BabbleSim peripheral:
 
 .. code-block:: console
 
    west build -p -d build-sap-peripheral -b nrf54l15bsim/nrf54l15/cpuapp \
+     --extra-conf peripheral.conf \
      $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
-     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
-     -DEXTRA_CONF_FILE=peripheral.conf
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT
 
 Build the hardware central:
 
 .. code-block:: console
 
    west build -p -d build-central-module -b nrf54l15dk/nrf54l15/cpuapp \
+     --extra-conf central.conf \
+     --extra-conf demo_logging.conf \
      $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
-     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
-     -DEXTRA_CONF_FILE="central.conf;demo_logging.conf"
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT
 
 Build the hardware peripheral:
 
 .. code-block:: console
 
    west build -p -d build-peripheral-module -b nrf54l15dk/nrf54l15/cpuapp \
+     --extra-conf peripheral.conf \
+     --extra-conf demo_logging.conf \
      $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
-     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
-     -DEXTRA_CONF_FILE="peripheral.conf;demo_logging.conf"
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT
 
 Build the TF-M-backed non-secure hardware central:
 
 .. code-block:: console
 
    west build -p -d build-central-module-tfm -b nrf54l15dk/nrf54l15/cpuapp/ns \
+     --extra-conf central.conf \
+     --extra-conf demo_logging.conf \
      $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
-     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
-     -DEXTRA_CONF_FILE="central.conf;demo_logging.conf"
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT
 
 Build the TF-M-backed non-secure hardware peripheral:
 
 .. code-block:: console
 
    west build -p -d build-peripheral-module-tfm -b nrf54l15dk/nrf54l15/cpuapp/ns \
+     --extra-conf peripheral.conf \
+     --extra-conf demo_logging.conf \
      $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
-     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
-     -DEXTRA_CONF_FILE="peripheral.conf;demo_logging.conf"
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT
 
 Build the XIAO peripheral:
 
 .. code-block:: console
 
    west build -p -d build-xiao-peripheral -b xiao_nrf54l15/nrf54l15/cpuapp \
+     --extra-conf peripheral.conf \
+     --extra-conf demo_logging.conf \
      $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
      -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
-     -DEXTRA_CONF_FILE="peripheral.conf;peripheral_id2.conf;demo_logging.conf"
+     -DCONFIG_SAP_DEMO_PERIPHERAL_ID=2
 
 Build the TF-M-backed non-secure XIAO peripheral:
 
 .. code-block:: console
 
    west build -p -d build-xiao-peripheral-tfm -b xiao_nrf54l15/nrf54l15/cpuapp/ns \
+     --extra-conf peripheral.conf \
+     --extra-conf demo_logging.conf \
      $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
      -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
-     -DEXTRA_CONF_FILE="peripheral.conf;peripheral_id2.conf;demo_logging.conf"
+     -DCONFIG_SAP_DEMO_PERIPHERAL_ID=2
 
 For nRF54L15 TF-M builds, use the ``/ns`` board qualifier instead of forcing
 ``CONFIG_BUILD_WITH_TFM=y`` onto ``nrf54l15dk/nrf54l15/cpuapp``. The non-secure
@@ -184,28 +193,34 @@ Build with the customer-demo flow trace enabled:
 .. code-block:: console
 
    west build -p -d build-peripheral-demo -b nrf54l15dk/nrf54l15/cpuapp \
+     --extra-conf peripheral.conf \
+     --extra-conf demo_logging.conf \
      $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
-     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
-     -DEXTRA_CONF_FILE="peripheral.conf;demo_logging.conf"
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT
 
    west build -p -d build-central-demo -b nrf54l15dk/nrf54l15/cpuapp \
+     --extra-conf central.conf \
+     --extra-conf demo_logging.conf \
      $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
-     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
-     -DEXTRA_CONF_FILE="central.conf;demo_logging.conf"
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT
 
 Build with raw SAP packet hexdumps enabled:
 
 .. code-block:: console
 
    west build -p -d build-peripheral-packets -b nrf54l15dk/nrf54l15/cpuapp \
+     --extra-conf peripheral.conf \
+     --extra-conf demo_logging.conf \
+     --extra-conf packet_logging.conf \
      $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
-     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
-     -DEXTRA_CONF_FILE="peripheral.conf;demo_logging.conf;packet_logging.conf"
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT
 
    west build -p -d build-central-packets -b nrf54l15dk/nrf54l15/cpuapp \
+     --extra-conf central.conf \
+     --extra-conf demo_logging.conf \
+     --extra-conf packet_logging.conf \
      $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
-     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
-     -DEXTRA_CONF_FILE="central.conf;demo_logging.conf;packet_logging.conf"
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT
 
 Running
 *******
@@ -276,6 +291,92 @@ Peripheral role:
 ``sap button`` uses the same secure application message as the physical DK
 Button 1 path, which is useful for scripted demos.
 
+Root-node upstream controller
+*****************************
+
+When built in the central role, the root node also advertises the SAP service
+as a peripheral so an external controller can authenticate with the same SAP
+strategy that the root uses toward leaf nodes. The reference controller is the
+Bleak script in ``scripts/sap_root_controller.py``.
+
+The upstream controller can:
+
+* authenticate to the root over SAP
+* query which leaf nodes are connected and authenticated
+* select which leaf receives a relayed DFU image
+* relay a signed MCUboot image into the selected leaf over the root's gated
+  DFU SMP link
+
+Example:
+
+.. code-block:: console
+
+   python3 scripts/sap_root_controller.py --no-linux-agent status
+   python3 scripts/sap_root_controller.py --no-linux-agent select 2
+   python3 scripts/sap_root_controller.py --no-linux-agent upload 2 \
+     build-leaf-v2/dfu_application.zip --expect-pattern 2
+
+The ``upload`` command waits for the leaf to reboot, reconnect, and report its
+new ``pattern_id`` unless ``--no-wait-reconnect`` is used.
+
+DFU Relay Demo
+**************
+
+The sample includes a visible DFU demo for leaf nodes. The default leaf image
+uses LED pattern ``1`` and reports a protected status string ending in
+``-p1``. The alternate DFU image built with ``peripheral_dfu_v2.conf`` uses
+LED pattern ``2`` and reports ``-p2`` after reboot.
+
+Build the root node with the upstream Bleak interop overlay:
+
+.. code-block:: console
+
+   west build -p -d build-root-upstream -b nrf54l15dk/nrf54l15/cpuapp/ns \
+     --extra-conf central.conf \
+     --extra-conf demo_logging.conf \
+     --extra-conf upstream_bleak.conf \
+     $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT
+
+Build the default leaf image:
+
+.. code-block:: console
+
+   west build -p -d build-leaf-default -b xiao_nrf54l15/nrf54l15/cpuapp/ns \
+     --extra-conf peripheral.conf \
+     --extra-conf demo_logging.conf \
+     $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
+     -DCONFIG_SAP_DEMO_PERIPHERAL_ID=2
+
+Build the alternate visible DFU image for that same leaf:
+
+.. code-block:: console
+
+   west build -p -d build-leaf-v2 -b xiao_nrf54l15/nrf54l15/cpuapp/ns \
+     --extra-conf peripheral.conf \
+     --extra-conf peripheral_dfu_v2.conf \
+     --extra-conf demo_logging.conf \
+     $SAP_MODULE_ROOT/samples/bluetooth/sap_demo -- \
+     -DEXTRA_ZEPHYR_MODULES=$SAP_MODULE_ROOT \
+     -DCONFIG_SAP_DEMO_PERIPHERAL_ID=2
+
+Flash ``build-leaf-default`` onto the leaf, flash ``build-root-upstream`` onto
+the root, and wait until the root reports the leaf as authenticated. Then
+relay the ``build-leaf-v2`` signed image through the upstream SAP controller:
+
+.. code-block:: console
+
+   python3 scripts/sap_root_controller.py --no-linux-agent status
+   python3 scripts/sap_root_controller.py --no-linux-agent upload 2 \
+     build-leaf-v2/dfu_application.zip --expect-pattern 2
+
+On success, the controller prints the relayed DFU progress, then waits for the
+leaf to reconnect and confirms that the root now reports ``pattern_id=2``.
+The Bleak uploader requests a test boot by default, and the leaf confirms the
+new image after a successful reboot. Pass ``--permanent`` only when you
+explicitly want the root to request a permanent slot activation.
+
 Behavior
 ********
 
@@ -291,7 +392,9 @@ Behavior
 6. After authentication, the peripheral dynamically registers a protected
    status service and the DFU SMP service. The central discovers the protected
    service and reads a status characteristic.
-7. The application demo path then stays behind SAP:
+7. In the root role, an upstream controller can also authenticate to the same
+   node using SAP and query leaf state over an encrypted SAP session.
+8. The application demo path then stays behind SAP:
 
    * arbitrary shell text is sent inside encrypted SAP frames
    * the peripheral's DK Button 1 sends a secure button-state event
@@ -299,6 +402,8 @@ Behavior
    * peripherals above ID ``4`` stay authenticated but have no LED assignment
    * the central probes the gated DFU SMP service with an MCUmgr OS echo
      request and gets the response only after SAP succeeds
+   * the upstream controller can select a leaf and relay a signed MCUboot
+     image into it over the root's gated DFU SMP link
 
 Verbose demo logs
 *****************

@@ -17,3 +17,19 @@ target_sources(app PRIVATE
 target_sources_ifdef(CONFIG_SAP_ROLE_CENTRAL app PRIVATE src/sap_central.c)
 target_sources_ifdef(CONFIG_SAP_ROLE_PERIPHERAL app PRIVATE src/sap_peripheral.c)
 target_include_directories(app PRIVATE src)
+
+if(CONFIG_SAP_DEMO_DFU_CLIENT)
+  target_include_directories(app PRIVATE
+    ${ZEPHYR_BASE}/subsys/mgmt/mcumgr/util/include
+  )
+  target_sources(app PRIVATE
+    ${ZEPHYR_BASE}/subsys/mgmt/mcumgr/util/src/zcbor_bulk.c
+  )
+endif()
+
+if(CONFIG_SAP_DEMO_DFU_SERVER AND CONFIG_NRF_MCUBOOT_BOOT_REQUEST)
+  target_include_directories(app PRIVATE
+    ${WEST_TOPDIR}/bootloader/mcuboot/boot/bootutil/include
+    ${WEST_TOPDIR}/bootloader/mcuboot/boot/zephyr/include
+  )
+endif()

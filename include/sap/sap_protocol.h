@@ -21,7 +21,8 @@
 #define SAP_AEAD_NONCE_BASE_LEN 8U
 #define SAP_AEAD_NONCE_LEN 13U
 #define SAP_AEAD_TAG_LEN 16U
-#define SAP_SECURE_HEADER_LEN 6U
+#define SAP_SECURE_HEADER_LEN 14U
+#define SAP_PLAINTEXT_HEADER_LEN 2U
 
 #define SAP_ROLE_MASK_CENTRAL BIT(0)
 #define SAP_ROLE_MASK_PERIPHERAL BIT(1)
@@ -98,6 +99,20 @@ struct sap_msg_central_auth {
 	uint8_t signature[SAP_IDENTITY_SIGNATURE_LEN];
 } __packed;
 
+struct sap_sc_oob_data_wire {
+	uint8_t random[16];
+	uint8_t confirm[16];
+} __packed;
+
+struct sap_msg_central_auth_oob {
+	uint8_t version;
+	uint8_t type;
+	struct sap_certificate cert;
+	uint8_t ecdh_public_key[SAP_ECDH_PUBLIC_KEY_LEN];
+	struct sap_sc_oob_data_wire oob_sc;
+	uint8_t signature[SAP_IDENTITY_SIGNATURE_LEN];
+} __packed;
+
 struct sap_msg_peripheral_auth {
 	uint8_t version;
 	uint8_t type;
@@ -105,10 +120,24 @@ struct sap_msg_peripheral_auth {
 	uint8_t signature[SAP_IDENTITY_SIGNATURE_LEN];
 } __packed;
 
+struct sap_msg_peripheral_auth_oob {
+	uint8_t version;
+	uint8_t type;
+	uint8_t ecdh_public_key[SAP_ECDH_PUBLIC_KEY_LEN];
+	struct sap_sc_oob_data_wire oob_sc;
+	uint8_t signature[SAP_IDENTITY_SIGNATURE_LEN];
+} __packed;
+
 struct sap_secure_header {
 	uint8_t version;
 	uint8_t type;
+	uint8_t nonce_base[SAP_AEAD_NONCE_BASE_LEN];
 	uint32_t counter_le;
+} __packed;
+
+struct sap_plaintext_header {
+	uint8_t version;
+	uint8_t type;
 } __packed;
 
 #endif /* SAP_PROTOCOL_H__ */

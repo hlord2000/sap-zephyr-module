@@ -124,11 +124,15 @@ After the ECDH exchange, both sides derive session material from:
 * both nonces as HKDF salt
 * a hash of the full transcript as HKDF ``info``
 
-The derived output is split into:
+The derived output is:
 
 * one AES-CCM key
-* one TX nonce base
-* one RX nonce base
+
+Each secure packet then contributes its own nonce material:
+
+* an 8-byte random nonce base carried in the secure header
+* a 32-bit packet counter tracked by the session
+* the SAP message type byte
 
 The transcript is hashed before HKDF because the nRF54L15 CRACEN backend
 limits HKDF ``info`` to 128 bytes.

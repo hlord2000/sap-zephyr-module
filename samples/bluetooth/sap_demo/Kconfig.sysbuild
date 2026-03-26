@@ -1,0 +1,25 @@
+#
+# Copyright (c) 2026
+#
+# SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+#
+
+choice BOOTLOADER
+	default BOOTLOADER_MCUBOOT if BOARD_XIAO_NRF54L15
+endchoice
+
+if BOOTLOADER_MCUBOOT
+
+choice MCUBOOT_MODE
+	default MCUBOOT_MODE_DIRECT_XIP if BOARD_XIAO_NRF54L15
+endchoice
+
+config PM_EXTERNAL_FLASH_MCUBOOT_SECONDARY
+	default y if BOARD_NRF54L15DK
+
+config PM_OVERRIDE_EXTERNAL_DRIVER_CHECK
+	default y if BOARD_NRF54L15DK
+
+endif
+
+source "share/sysbuild/Kconfig"
